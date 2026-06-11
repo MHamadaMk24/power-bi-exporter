@@ -8,12 +8,20 @@ logger = logging.getLogger(__name__)
 LOGIN_URL_MARKERS = ("login.microsoftonline.com", "login.live.com")
 LOGIN_TIMEOUT_SECONDS = 180
 
+REPORT_DOM_SELECTORS = (
+    "div.reportContainer",
+    "path.ui-role-button-fill",
+    '[data-testid="slicer-dropdown"]',
+    "visual-modern",
+)
+
 
 def navigate_to_report(page: Page, url: str, email: str, password: str) -> None:
     """Open a report URL and complete Microsoft sign-in if prompted."""
     page.goto(url, wait_until="domcontentloaded", timeout=120000)
+    page.wait_for_timeout(2000)
     login_to_power_bi(page, email, password)
-    _wait_for_report_page(page, timeout_seconds=90)
+    _wait_for_report_page(page, timeout_seconds=120)
 
 
 def login_to_power_bi(page: Page, email: str, password: str) -> None:
@@ -22,19 +30,21 @@ def login_to_power_bi(page: Page, email: str, password: str) -> None:
 
     while time.time() < deadline:
         if _on_report_page(page):
-            logger.info("Authenticated — report page ready")
+            logger.info("Authenticated — report content visible")
             return
 
-        if _needs_login(page):
-            logger.info("Microsoft sign-in required at %s", page.url[:100])
+        if _on_auth_flow_page(page):
+            logger.info("Microsoft sign-in in progress at %s", page.url[:120])
             _submit_email(page, email)
             _submit_password(page, password)
+            _select_account_tile(page, email)
             _handle_post_password_prompts(page)
+            _wait_through_oauth_redirect(page, timeout_seconds=30)
 
         page.wait_for_timeout(2000)
 
         if _on_report_page(page):
-            logger.info("Authenticated — report page ready")
+            logger.info("Authenticated — report content visible")
             return
 
     raise RuntimeError(
@@ -43,8 +53,9 @@ def login_to_power_bi(page: Page, email: str, password: str) -> None:
     )
 
 
-def _needs_login(page: Page) -> bool:
-    if any(marker in (page.url or "").lower() for marker in LOGIN_URL_MARKERS):
+def _on_auth_flow_page(page: Page) -> bool:
+    url = (page.url or "").lower()
+    if any(marker in url for marker in LOGIN_URL_MARKERS):
         return True
     return page.locator(
         'input[name="loginfmt"], input[type="email"], input[name="passwd"], input[type="password"]'
@@ -83,13 +94,27 @@ def _submit_password(page: Page, password: str) -> None:
             continue
 
 
+def _select_account_tile(page: Page, email: str) -> None:
+    try:
+        tile = page.locator(
+            f'div[data-test-id="{email}"], '
+            f'div.table-cell:has-text("{email}"), '
+            f'small:has-text("{email}")'
+        ).first
+        if tile.count() > 0 and tile.is_visible(timeout=3000):
+            tile.click()
+            page.wait_for_timeout(2000)
+            logger.info("Selected saved Microsoft account")
+    except PlaywrightTimeout:
+        return
+
+
 def _handle_post_password_prompts(page: Page) -> None:
     _dismiss_stay_signed_in(page)
     page.wait_for_timeout(2000)
 
 
 def _dismiss_stay_signed_in(page: Page) -> None:
-    # Prefer "Yes" so later navigations reuse the session in CI.
     for selector in (
         "#idSIButton9",
         'input[id="idBtn_Back"]',
@@ -107,6 +132,16 @@ def _dismiss_stay_signed_in(page: Page) -> None:
             continue
 
 
+def _wait_through_oauth_redirect(page: Page, *, timeout_seconds: int) -> None:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if _on_report_page(page):
+            return
+        if not _on_auth_flow_page(page):
+            return
+        page.wait_for_timeout(1000)
+
+
 def _wait_for_report_page(page: Page, *, timeout_seconds: int) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -118,18 +153,34 @@ def _wait_for_report_page(page: Page, *, timeout_seconds: int) -> None:
     )
 
 
+def _has_visible_report_content(page: Page) -> bool:
+    for selector in REPORT_DOM_SELECTORS:
+        locator = page.locator(selector)
+        if locator.count() > 0:
+            try:
+                if locator.first.is_visible(timeout=1000):
+                    return True
+            except PlaywrightTimeout:
+                continue
+
+    for frame in page.frames:
+        frame_url = (frame.url or "").lower()
+        if "powerbi" not in frame_url and "reportembed" not in frame_url:
+            continue
+        for selector in REPORT_DOM_SELECTORS:
+            if frame.locator(selector).count() > 0:
+                return True
+    return False
+
+
+def is_report_ready(page: Page) -> bool:
+    return _on_report_page(page)
+
+
 def _on_report_page(page: Page) -> bool:
     url = (page.url or "").lower()
     if any(marker in url for marker in LOGIN_URL_MARKERS):
         return False
-    if "reportembed" in url or "/reports/" in url:
-        return True
-    if page.locator("div.reportContainer").count() > 0:
-        return True
-    if page.locator("path.ui-role-button-fill").count() > 0:
-        return True
-    if page.locator('[data-testid="slicer-dropdown"]').count() > 0:
-        return True
-    if page.locator("iframe").count() > 0 and "powerbi" in url:
-        return True
-    return False
+    if "oauth2" in url and "authorize" in url:
+        return False
+    return _has_visible_report_content(page)

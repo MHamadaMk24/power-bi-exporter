@@ -8,7 +8,7 @@ import yaml
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
-from auth import navigate_to_report
+from auth import is_report_ready, navigate_to_report
 from browser import (
     click_navigation_button,
     clear_slicer_selection,
@@ -40,6 +40,12 @@ DEFAULT_CONFIG_CANDIDATES = (
     ROOT / "config" / "daily.yaml",
     ROOT / "config.yaml",
 )
+
+
+def _report_content_ready(page, report_url: str) -> bool:
+    current = (page.url or "").split("?")[0]
+    target = report_url.split("?")[0]
+    return current == target and is_report_ready(page)
 
 
 def resolve_config_path(config_path: Path | str | None = None) -> Path:
@@ -369,7 +375,8 @@ def run_report_exports(
     )
 
     logger.info("Opening report URL")
-    navigate_to_report(page, report["report_url"], email, password)
+    if not _report_content_ready(page, report["report_url"]):
+        navigate_to_report(page, report["report_url"], email, password)
     report_frame = get_report_frame(page)
     page.wait_for_timeout(3000)
 

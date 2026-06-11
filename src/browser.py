@@ -38,9 +38,14 @@ def get_report_frame(page: Page, timeout_ms: int = 120000) -> FrameLocator | Pag
             "Still on Microsoft login page — sign-in did not complete. "
             f"URL: {page.url}"
         )
+    if "oauth2" in url and "authorize" in url:
+        raise RuntimeError(
+            "Still on Microsoft OAuth redirect — sign-in did not complete. "
+            f"URL: {page.url}"
+        )
 
     selector_union = ", ".join(REPORT_READY_SELECTORS)
-    page.wait_for_selector(selector_union, timeout=timeout_ms)
+    page.wait_for_selector(selector_union, state="visible", timeout=timeout_ms)
     page.wait_for_timeout(3000)
 
     if _report_hosted_on_page(page):
