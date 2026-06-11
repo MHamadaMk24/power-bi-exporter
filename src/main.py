@@ -8,7 +8,7 @@ import yaml
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
-from auth import login_to_power_bi
+from auth import navigate_to_report
 from browser import (
     click_navigation_button,
     clear_slicer_selection,
@@ -210,9 +210,12 @@ def open_report_entry(
     nav_cfg: dict,
     load_cfg: dict,
     page_waits: dict[int, int],
+    *,
+    email: str,
+    password: str,
 ):
     logger.info("Reloading report and opening entry view")
-    page.goto(report_url, wait_until="domcontentloaded", timeout=120000)
+    navigate_to_report(page, report_url, email, password)
     report_frame = get_report_frame(page)
     page.wait_for_timeout(3000)
     click_navigation_button(report_frame, nav_cfg["entry_button"])
@@ -347,6 +350,8 @@ def run_report_exports(
     uploader: SharePointUploader | None,
     upload_after_each: bool,
     default_sharepoint_folder: str,
+    email: str,
+    password: str,
 ) -> list[Path]:
     report_name = report.get("name", "report")
     report_title = report_label(report)
@@ -364,7 +369,7 @@ def run_report_exports(
     )
 
     logger.info("Opening report URL")
-    page.goto(report["report_url"], wait_until="domcontentloaded", timeout=120000)
+    navigate_to_report(page, report["report_url"], email, password)
     report_frame = get_report_frame(page)
     page.wait_for_timeout(3000)
 
@@ -387,6 +392,8 @@ def run_report_exports(
         nav_cfg,
         load_cfg,
         page_waits,
+        email=email,
+        password=password,
     )
 
     pdf_paths: list[Path] = []
@@ -405,6 +412,8 @@ def run_report_exports(
                 nav_cfg,
                 load_cfg,
                 page_waits,
+                email=email,
+                password=password,
             )
         pdf_path = export_filter_pdf(
             page,
@@ -457,16 +466,22 @@ def run_export(
 
     with sync_playwright() as p:
         browser = p.chromium.launch(**chromium_launch_kwargs(config))
-        context = browser.new_context(
-            viewport={
+        context_kwargs: dict = {
+            "viewport": {
                 "width": browser_cfg.get("viewport_width", 1920),
                 "height": browser_cfg.get("viewport_height", 1080),
-            }
-        )
+            },
+        }
+        if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+            context_kwargs["user_agent"] = (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            )
+        context = browser.new_context(**context_kwargs)
         page = context.new_page()
 
-        page.goto(reports[0]["report_url"], wait_until="domcontentloaded", timeout=120000)
-        login_to_power_bi(page, email, password)
+        navigate_to_report(page, reports[0]["report_url"], email, password)
 
         for report in reports:
             load_cfg = merge_load_detection(config, report)
@@ -478,6 +493,8 @@ def run_export(
                 uploader=uploader,
                 upload_after_each=upload_after_each,
                 default_sharepoint_folder=default_sp_folder,
+                email=email,
+                password=password,
             )
             pdf_paths.extend(report_pdfs)
 

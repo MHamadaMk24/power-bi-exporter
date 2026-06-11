@@ -32,6 +32,13 @@ def _report_hosted_on_page(page: Page) -> bool:
 
 def get_report_frame(page: Page, timeout_ms: int = 120000) -> FrameLocator | Page:
     """Return the frame or page that hosts the Power BI report."""
+    url = (page.url or "").lower()
+    if "login.microsoftonline.com" in url or "login.live.com" in url:
+        raise RuntimeError(
+            "Still on Microsoft login page — sign-in did not complete. "
+            f"URL: {page.url}"
+        )
+
     selector_union = ", ".join(REPORT_READY_SELECTORS)
     page.wait_for_selector(selector_union, timeout=timeout_ms)
     page.wait_for_timeout(3000)
