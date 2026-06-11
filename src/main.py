@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 from dotenv import load_dotenv
@@ -44,10 +45,17 @@ DEFAULT_CONFIG_CANDIDATES = (
 )
 
 
+def _embed_report_id(url: str) -> str:
+    if not url:
+        return ""
+    return parse_qs(urlparse(url).query).get("reportId", [""])[0]
+
+
 def _report_content_ready(page, report_url: str) -> bool:
-    current = (page.url or "").split("?")[0]
-    target = report_url.split("?")[0]
-    return current == target and is_report_ready(page)
+    current_url = page.url or ""
+    if _embed_report_id(current_url) != _embed_report_id(report_url):
+        return False
+    return is_report_ready(page)
 
 
 def resolve_config_path(config_path: Path | str | None = None) -> Path:
@@ -386,6 +394,8 @@ def run_report_exports(
     logger.info("Opening report URL")
     if not _report_content_ready(page, report["report_url"]):
         navigate_to_report(page, report["report_url"], email, password)
+    else:
+        logger.info("Already on target report: %s", _embed_report_id(report["report_url"]))
     report_frame = get_report_frame(page)
     page.wait_for_timeout(3000)
 
