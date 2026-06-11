@@ -6,7 +6,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout
 logger = logging.getLogger(__name__)
 
 LOGIN_URL_MARKERS = ("login.microsoftonline.com", "login.live.com")
-LOGIN_TIMEOUT_SECONDS = 180
+LOGIN_TIMEOUT_SECONDS = 240
 
 REPORT_DOM_SELECTORS = (
     "div.reportContainer",
@@ -18,6 +18,12 @@ REPORT_DOM_SELECTORS = (
 
 def navigate_to_report(page: Page, url: str, email: str, password: str) -> None:
     """Open a report URL and complete Microsoft sign-in if prompted."""
+    if not is_report_ready(page):
+        logger.info("Pre-authenticating via Power BI home")
+        page.goto("https://app.powerbi.com", wait_until="domcontentloaded", timeout=120000)
+        page.wait_for_timeout(2000)
+        login_to_power_bi(page, email, password)
+
     page.goto(url, wait_until="domcontentloaded", timeout=120000)
     page.wait_for_timeout(2000)
     login_to_power_bi(page, email, password)
@@ -33,15 +39,26 @@ def login_to_power_bi(page: Page, email: str, password: str) -> None:
             logger.info("Authenticated — report content visible")
             return
 
-        if _on_auth_flow_page(page):
-            logger.info("Microsoft sign-in in progress at %s", page.url[:120])
-            _submit_email(page, email)
-            _submit_password(page, password)
-            _select_account_tile(page, email)
-            _handle_post_password_prompts(page)
-            _wait_through_oauth_redirect(page, timeout_seconds=30)
+        if not _on_auth_flow_page(page):
+            page.wait_for_timeout(2000)
+            continue
 
-        page.wait_for_timeout(2000)
+        logger.info("Microsoft sign-in step at %s", page.url[:120])
+
+        if _on_account_picker(page):
+            _select_account_from_picker(page, email)
+
+        if _has_email_field(page):
+            _submit_email(page, email)
+
+        if _has_password_field(page):
+            _submit_password(page, password)
+
+        if _on_kmsi_page(page):
+            _accept_stay_signed_in(page)
+
+        _wait_through_oauth_redirect(page, timeout_seconds=20)
+        page.wait_for_timeout(1500)
 
         if _on_report_page(page):
             logger.info("Authenticated — report content visible")
@@ -57,9 +74,78 @@ def _on_auth_flow_page(page: Page) -> bool:
     url = (page.url or "").lower()
     if any(marker in url for marker in LOGIN_URL_MARKERS):
         return True
-    return page.locator(
-        'input[name="loginfmt"], input[type="email"], input[name="passwd"], input[type="password"]'
-    ).count() > 0
+    if _on_account_picker(page):
+        return True
+    return _has_email_field(page) or _has_password_field(page) or _on_kmsi_page(page)
+
+
+def _on_account_picker(page: Page) -> bool:
+    url = (page.url or "").lower()
+    if "select_account" in url or "/reprocess" in url:
+        return True
+    if page.locator("#tilesHolder, #credentialPickerTitle").count() > 0:
+        return True
+    return page.locator('div[role="heading"]:has-text("Pick an account")').count() > 0
+
+
+def _has_email_field(page: Page) -> bool:
+    return page.locator('input[name="loginfmt"], input[type="email"], #i0116').count() > 0
+
+
+def _has_password_field(page: Page) -> bool:
+    return page.locator('input[name="passwd"], input[type="password"], #i0118').count() > 0
+
+
+def _on_kmsi_page(page: Page) -> bool:
+    return page.locator("#KmsiDescription, #KmsiCheckbox, #KmsiTitle").count() > 0
+
+
+def _select_account_from_picker(page: Page, email: str) -> bool:
+    email_lower = email.lower()
+
+    rows = page.locator("div.table-row")
+    for index in range(rows.count()):
+        row = rows.nth(index)
+        try:
+            row_text = row.inner_text(timeout=2000).lower()
+        except PlaywrightTimeout:
+            continue
+        if email_lower in row_text:
+            row.click()
+            page.wait_for_timeout(3000)
+            logger.info("Selected account from picker: %s", email)
+            return True
+
+    for locator in (
+        page.locator(f'small:text-is("{email}")'),
+        page.get_by_text(email, exact=True),
+        page.locator(f'div[data-test-id="{email}"]'),
+    ):
+        if locator.count() == 0:
+            continue
+        try:
+            target = locator.first
+            if target.is_visible(timeout=2000):
+                target.click()
+                page.wait_for_timeout(3000)
+                logger.info("Selected account tile: %s", email)
+                return True
+        except PlaywrightTimeout:
+            continue
+
+    if not _has_email_field(page):
+        other_account = page.locator(
+            "#otherTileText, div.table-cell:has-text('Use another account')"
+        )
+        if other_account.count() > 0:
+            try:
+                other_account.first.click(timeout=3000)
+                page.wait_for_timeout(2000)
+                logger.info('Opened "Use another account"')
+            except PlaywrightTimeout:
+                pass
+
+    return False
 
 
 def _submit_email(page: Page, email: str) -> None:
@@ -94,31 +180,11 @@ def _submit_password(page: Page, password: str) -> None:
             continue
 
 
-def _select_account_tile(page: Page, email: str) -> None:
-    try:
-        tile = page.locator(
-            f'div[data-test-id="{email}"], '
-            f'div.table-cell:has-text("{email}"), '
-            f'small:has-text("{email}")'
-        ).first
-        if tile.count() > 0 and tile.is_visible(timeout=3000):
-            tile.click()
-            page.wait_for_timeout(2000)
-            logger.info("Selected saved Microsoft account")
-    except PlaywrightTimeout:
-        return
-
-
-def _handle_post_password_prompts(page: Page) -> None:
-    _dismiss_stay_signed_in(page)
-    page.wait_for_timeout(2000)
-
-
-def _dismiss_stay_signed_in(page: Page) -> None:
+def _accept_stay_signed_in(page: Page) -> None:
     for selector in (
         "#idSIButton9",
-        'input[id="idBtn_Back"]',
         'button:has-text("Yes")',
+        'input[id="idBtn_Back"]',
         'button:has-text("No")',
     ):
         try:
@@ -126,7 +192,7 @@ def _dismiss_stay_signed_in(page: Page) -> None:
             if button.is_visible(timeout=4000):
                 button.click()
                 page.wait_for_timeout(1500)
-                logger.info("Dismissed post-login prompt")
+                logger.info("Accepted stay-signed-in prompt")
                 return
         except PlaywrightTimeout:
             continue
@@ -182,5 +248,7 @@ def _on_report_page(page: Page) -> bool:
     if any(marker in url for marker in LOGIN_URL_MARKERS):
         return False
     if "oauth2" in url and "authorize" in url:
+        return False
+    if "select_account" in url or "/reprocess" in url:
         return False
     return _has_visible_report_content(page)
