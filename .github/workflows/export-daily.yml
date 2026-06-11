@@ -41,7 +41,7 @@ jobs:
           SHAREPOINT_SITE_NAME: ${{ secrets.SHAREPOINT_SITE_NAME }}
           SHAREPOINT_DOC_LIB: ${{ secrets.SHAREPOINT_DOC_LIB }}
           TARGET_FOLDER_PATH: ${{ secrets.TARGET_FOLDER_PATH }}
-        run: python main.py --config ../config/daily.yaml
+        run: python main.py --config config/daily.yaml
 
       - name: Upload PDF artifacts
         if: always()

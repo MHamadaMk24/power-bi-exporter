@@ -23,7 +23,7 @@ Run one report:
 
 ```bash
 python main.py --report skidata
-python main.py --config ../config/daily.yaml --report pass
+python main.py --config config/daily.yaml --report pass
 ```
 
 ## GitHub Actions (cron-job.org)

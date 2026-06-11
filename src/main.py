@@ -53,7 +53,8 @@ def resolve_config_path(config_path: Path | str | None = None) -> Path:
 
     path = Path(config_path)
     if not path.is_absolute():
-        path = ROOT / path
+        # Config paths are relative to the project root, not the shell cwd.
+        path = (ROOT / path).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Config file not found: {path}")
     return path
