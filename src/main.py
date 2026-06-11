@@ -19,6 +19,7 @@ from browser import (
     open_slicer_dropdown,
     sanitize_filename,
     select_slicer_option,
+    wait_for_slicer_ready,
 )
 
 from export import merge_images_to_pdf
@@ -220,6 +221,7 @@ def open_report_entry(
     *,
     email: str,
     password: str,
+    slicer_label: str | None = None,
 ):
     logger.info("Reloading report and opening entry view")
     navigate_to_report(page, report_url, email, password)
@@ -231,6 +233,8 @@ def open_report_entry(
         report_frame,
         **_wait_cfg(load_cfg, page_waits, 0),
     )
+    if slicer_label:
+        wait_for_slicer_ready(report_frame, slicer_label)
     return report_frame
 
 
@@ -242,9 +246,12 @@ def apply_filter(
     page_waits: dict[int, int],
     filter_value: str,
 ) -> str:
-    open_slicer_dropdown(report_frame, filter_cfg["slicer_label"])
-    clear_slicer_selection(page, report_frame, filter_cfg["slicer_label"])
-    open_slicer_dropdown(report_frame, filter_cfg["slicer_label"])
+    slicer_label = filter_cfg["slicer_label"]
+    wait_for_slicer_ready(report_frame, slicer_label)
+    close_slicer_dropdown(page, report_frame, slicer_label)
+    open_slicer_dropdown(report_frame, slicer_label, page=page)
+    clear_slicer_selection(page, report_frame, slicer_label)
+    open_slicer_dropdown(report_frame, slicer_label, page=page)
     filter_name = select_slicer_option(report_frame, filter_value)
     close_slicer_dropdown(page, report_frame, filter_cfg["slicer_label"])
 
@@ -400,6 +407,7 @@ def run_report_exports(
         ", ".join(filter_values),
     )
 
+    slicer_label = filter_cfg["slicer_label"]
     report_frame = open_report_entry(
         page,
         report["report_url"],
@@ -408,6 +416,7 @@ def run_report_exports(
         page_waits,
         email=email,
         password=password,
+        slicer_label=slicer_label,
     )
 
     pdf_paths: list[Path] = []
@@ -428,6 +437,7 @@ def run_report_exports(
                 page_waits,
                 email=email,
                 password=password,
+                slicer_label=slicer_label,
             )
         pdf_path = export_filter_pdf(
             page,

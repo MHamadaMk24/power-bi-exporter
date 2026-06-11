@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import time
 
@@ -105,21 +106,67 @@ def click_navigation_button(report_frame: ReportHost, button_cfg: dict) -> None:
     raise ValueError("Navigation button config must include text, path_width, or clip_path")
 
 
-def open_slicer_dropdown(report_frame: ReportHost, slicer_label: str) -> None:
-    dropdown = report_frame.locator(
+def _slicer_dropdown(report_frame: ReportHost, slicer_label: str):
+    return report_frame.locator(
         f'[data-testid="slicer-dropdown"][aria-label="{slicer_label}"]'
     )
-    dropdown.wait_for(state="visible", timeout=60000)
 
-    for attempt in range(3):
-        dropdown.click(force=True)
-        popup = report_frame.locator('[role="listbox"]').last
-        try:
-            popup.wait_for(state="visible", timeout=5000)
+
+def wait_for_slicer_ready(report_frame: ReportHost, slicer_label: str) -> None:
+    dropdown = _slicer_dropdown(report_frame, slicer_label)
+    dropdown.wait_for(state="visible", timeout=90000)
+    dropdown.scroll_into_view_if_needed(timeout=10000)
+    page_wait_ms = 1500 if os.environ.get("GITHUB_ACTIONS") else 500
+    time.sleep(page_wait_ms / 1000)
+
+
+def open_slicer_dropdown(
+    report_frame: ReportHost,
+    slicer_label: str,
+    *,
+    page: Page | None = None,
+) -> None:
+    dropdown = _slicer_dropdown(report_frame, slicer_label)
+    dropdown.wait_for(state="visible", timeout=90000)
+    dropdown.scroll_into_view_if_needed(timeout=10000)
+
+    if page is not None:
+        for _ in range(3):
+            if not _slicer_popup_visible(report_frame):
+                break
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+
+    popup_wait_ms = 8000 if os.environ.get("GITHUB_ACTIONS") else 5000
+    click_targets = (
+        dropdown,
+        dropdown.locator(".slicer-head-container"),
+        dropdown.locator(".slicer-header"),
+        dropdown.locator('[role="combobox"]'),
+    )
+
+    for attempt in range(6):
+        if _slicer_popup_visible(report_frame):
             logger.info("Opened slicer dropdown: %s", slicer_label)
             return
-        except Exception:
-            logger.debug("Slicer dropdown not open yet (attempt %s)", attempt + 1)
+
+        for target in click_targets:
+            if target.count() == 0:
+                continue
+            try:
+                target.first.click(force=True)
+            except Exception:
+                logger.debug("Slicer click failed (attempt %s)", attempt + 1)
+            popup = report_frame.locator('[role="listbox"]').last
+            try:
+                popup.wait_for(state="visible", timeout=popup_wait_ms)
+                logger.info("Opened slicer dropdown: %s", slicer_label)
+                return
+            except Exception:
+                continue
+
+        if page is not None:
+            page.wait_for_timeout(800)
 
     raise RuntimeError(f'Could not open slicer dropdown: "{slicer_label}"')
 
@@ -128,9 +175,7 @@ def clear_slicer_selection(
     page: Page, report_frame: ReportHost, slicer_label: str
 ) -> None:
     """Clear the slicer when 'All' or prior selections are still active."""
-    dropdown = report_frame.locator(
-        f'[data-testid="slicer-dropdown"][aria-label="{slicer_label}"]'
-    )
+    dropdown = _slicer_dropdown(report_frame, slicer_label)
     current = dropdown.locator(".slicer-restatement").inner_text().strip()
     if not current or current.lower() == "all":
         clear_btn = report_frame.locator('[aria-label="Clear selections"]')
@@ -173,9 +218,7 @@ def close_slicer_dropdown(
     page: Page, report_frame: ReportHost, slicer_label: str
 ) -> None:
     """Dismiss the Location slicer popup before screenshots."""
-    dropdown = report_frame.locator(
-        f'[data-testid="slicer-dropdown"][aria-label="{slicer_label}"]'
-    )
+    dropdown = _slicer_dropdown(report_frame, slicer_label)
 
     for attempt in range(5):
         if not _slicer_popup_visible(report_frame):
