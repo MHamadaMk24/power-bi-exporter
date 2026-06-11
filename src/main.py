@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 from auth import is_report_ready, navigate_to_report
+from session_state import CHROMIUM_USER_AGENT, resolve_storage_state_path
 from browser import (
     click_navigation_button,
     clear_slicer_selection,
@@ -358,6 +359,7 @@ def run_report_exports(
     default_sharepoint_folder: str,
     email: str,
     password: str,
+    only_locations: list[str] | None = None,
 ) -> list[Path]:
     report_name = report.get("name", "report")
     report_title = report_label(report)
@@ -388,9 +390,14 @@ def run_report_exports(
         **_wait_cfg(load_cfg, page_waits, 0),
     )
 
-    filter_values = resolve_filter_values(report_frame, page, filter_cfg)
+    filter_values = only_locations or resolve_filter_values(
+        report_frame, page, filter_cfg
+    )
     logger.info(
-        "Exporting %s location(s) for '%s'", len(filter_values), report_title
+        "Exporting %s location(s) for '%s': %s",
+        len(filter_values),
+        report_title,
+        ", ".join(filter_values),
     )
 
     report_frame = open_report_entry(
@@ -447,6 +454,8 @@ def run_report_exports(
 def run_export(
     only_reports: list[str] | None = None,
     config_path: Path | str | None = None,
+    only_locations: list[str] | None = None,
+    skip_sharepoint: bool = False,
 ) -> list[Path]:
     load_dotenv(ROOT / ".env")
     config = load_config(config_path)
@@ -461,7 +470,9 @@ def run_export(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     browser_cfg = browser_settings(config)
-    uploader = _build_sharepoint_uploader(config)
+    uploader = None if skip_sharepoint else _build_sharepoint_uploader(config)
+    if skip_sharepoint:
+        logger.info("SharePoint upload skipped (--skip-sharepoint)")
     upload_after_each = config.get("sharepoint", {}).get("upload_after_each", True)
     default_sp_folder = (
         SharePointConfig.from_env().target_folder
@@ -478,13 +489,12 @@ def run_export(
                 "width": browser_cfg.get("viewport_width", 1920),
                 "height": browser_cfg.get("viewport_height", 1080),
             },
+            "user_agent": CHROMIUM_USER_AGENT,
         }
-        if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
-            context_kwargs["user_agent"] = (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
+        storage_state = resolve_storage_state_path()
+        if storage_state:
+            context_kwargs["storage_state"] = str(storage_state)
+            logger.info("Loaded saved browser session from %s", storage_state)
         context = browser.new_context(**context_kwargs)
         page = context.new_page()
 
@@ -502,6 +512,7 @@ def run_export(
                 default_sharepoint_folder=default_sp_folder,
                 email=email,
                 password=password,
+                only_locations=only_locations,
             )
             pdf_paths.extend(report_pdfs)
 
@@ -525,6 +536,18 @@ def parse_args() -> argparse.Namespace:
         metavar="NAME",
         help="Run only named report(s), e.g. skidata or pass (repeatable)",
     )
+    parser.add_argument(
+        "--location",
+        action="append",
+        dest="locations",
+        metavar="NAME",
+        help="Export only this location/mall (repeatable), e.g. 'Alnoor Mall'",
+    )
+    parser.add_argument(
+        "--skip-sharepoint",
+        action="store_true",
+        help="Skip SharePoint upload (useful for local test runs)",
+    )
     return parser.parse_args()
 
 
@@ -534,6 +557,8 @@ if __name__ == "__main__":
         results = run_export(
             only_reports=args.reports,
             config_path=args.config,
+            only_locations=args.locations,
+            skip_sharepoint=args.skip_sharepoint,
         )
         print(f"Export complete. {len(results)} PDF(s):")
         for path in results:

@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 venv/
 playwright-state/
+playwright-state/*.b64.txt
+playwright-state/*.secret.txt
 *.log
 .python-version
 .cursor/
