@@ -18,12 +18,6 @@ REPORT_DOM_SELECTORS = (
 
 def navigate_to_report(page: Page, url: str, email: str, password: str) -> None:
     """Open a report URL and complete Microsoft sign-in if prompted."""
-    if not is_report_ready(page):
-        logger.info("Pre-authenticating via Power BI home")
-        page.goto("https://app.powerbi.com", wait_until="domcontentloaded", timeout=120000)
-        page.wait_for_timeout(2000)
-        login_to_power_bi(page, email, password)
-
     page.goto(url, wait_until="domcontentloaded", timeout=120000)
     page.wait_for_timeout(2000)
     login_to_power_bi(page, email, password)
@@ -44,6 +38,9 @@ def login_to_power_bi(page: Page, email: str, password: str) -> None:
             continue
 
         logger.info("Microsoft sign-in step at %s", page.url[:120])
+
+        if _on_powerbi_sso_page(page):
+            _advance_from_powerbi_sso(page)
 
         if _on_account_picker(page):
             _select_account_from_picker(page, email)
@@ -70,8 +67,52 @@ def login_to_power_bi(page: Page, email: str, password: str) -> None:
     )
 
 
+def _on_powerbi_sso_page(page: Page) -> bool:
+    url = (page.url or "").lower()
+    return "app.powerbi.com" in url and (
+        "singlesignon" in url or "nosignupcheck" in url
+    )
+
+
+def _advance_from_powerbi_sso(page: Page) -> None:
+    logger.info("On Power BI SSO page — waiting for Microsoft redirect")
+    try:
+        page.wait_for_url("**://login.microsoftonline.com/**", timeout=45000)
+        logger.info("Redirected to Microsoft login")
+        return
+    except PlaywrightTimeout:
+        pass
+
+    for selector in (
+        'a:has-text("Sign in")',
+        'button:has-text("Sign in")',
+        'a[href*="login.microsoftonline.com"]',
+    ):
+        try:
+            control = page.locator(selector).first
+            if control.count() > 0 and control.is_visible(timeout=3000):
+                control.click()
+                page.wait_for_timeout(3000)
+                logger.info("Clicked Power BI sign-in control")
+                try:
+                    page.wait_for_url("**://login.microsoftonline.com/**", timeout=30000)
+                    logger.info("Redirected to Microsoft login")
+                except PlaywrightTimeout:
+                    pass
+                return
+        except PlaywrightTimeout:
+            continue
+
+    try:
+        page.wait_for_load_state("networkidle", timeout=15000)
+    except PlaywrightTimeout:
+        pass
+
+
 def _on_auth_flow_page(page: Page) -> bool:
     url = (page.url or "").lower()
+    if _on_powerbi_sso_page(page):
+        return True
     if any(marker in url for marker in LOGIN_URL_MARKERS):
         return True
     if _on_account_picker(page):
@@ -250,5 +291,7 @@ def _on_report_page(page: Page) -> bool:
     if "oauth2" in url and "authorize" in url:
         return False
     if "select_account" in url or "/reprocess" in url:
+        return False
+    if _on_powerbi_sso_page(page):
         return False
     return _has_visible_report_content(page)
