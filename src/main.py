@@ -73,6 +73,22 @@ def browser_settings(config: dict) -> dict:
     return settings
 
 
+def chromium_launch_kwargs(config: dict) -> dict:
+    settings = browser_settings(config)
+    kwargs: dict = {
+        "headless": settings.get("headless", False),
+        "slow_mo": settings.get("slow_mo", 0),
+    }
+    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
+        kwargs["headless"] = True
+        kwargs["args"] = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+        ]
+    return kwargs
+
+
 def resolve_reports(config: dict, only_names: list[str] | None = None) -> list[dict]:
     if "reports" in config:
         reports = config["reports"]
@@ -440,10 +456,7 @@ def run_export(
     pdf_paths: list[Path] = []
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=browser_cfg.get("headless", False),
-            slow_mo=browser_cfg.get("slow_mo", 0),
-        )
+        browser = p.chromium.launch(**chromium_launch_kwargs(config))
         context = browser.new_context(
             viewport={
                 "width": browser_cfg.get("viewport_width", 1920),
