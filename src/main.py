@@ -211,7 +211,7 @@ def resolve_filter_values(report_frame, page, filter_cfg: dict) -> list[str]:
         return [test_value]
 
     slicer_label = filter_cfg["slicer_label"]
-    wait_for_slicer_ready(report_frame, slicer_label)
+    wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
     skip_values = filter_cfg.get("skip_values") or ["All"]
     options = list_slicer_options(
@@ -243,10 +243,11 @@ def open_report_entry(
     wait_for_report_ready(
         page,
         report_frame,
+        pending_selector=".slicer-header-pending-text",
         **_wait_cfg(load_cfg, page_waits, 0),
     )
     if slicer_label:
-        wait_for_slicer_ready(report_frame, slicer_label)
+        wait_for_slicer_ready(report_frame, slicer_label, page=page)
     return report_frame
 
 
@@ -259,7 +260,7 @@ def apply_filter(
     filter_value: str,
 ) -> str:
     slicer_label = filter_cfg["slicer_label"]
-    wait_for_slicer_ready(report_frame, slicer_label)
+    wait_for_slicer_ready(report_frame, slicer_label, page=page)
     close_slicer_dropdown(page, report_frame, slicer_label)
     open_slicer_dropdown(report_frame, slicer_label, page=page)
     clear_slicer_selection(page, report_frame, slicer_label)
@@ -412,7 +413,7 @@ def run_report_exports(
     )
 
     slicer_label = filter_cfg["slicer_label"]
-    wait_for_slicer_ready(report_frame, slicer_label)
+    wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
     filter_values = only_locations or resolve_filter_values(
         report_frame, page, filter_cfg

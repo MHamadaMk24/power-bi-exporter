@@ -128,12 +128,67 @@ def _slicer_dropdown(report_frame: ReportHost, slicer_label: str):
     return exact
 
 
-def wait_for_slicer_ready(report_frame: ReportHost, slicer_label: str) -> None:
+def wait_for_slicer_ready(
+    report_frame: ReportHost,
+    slicer_label: str,
+    *,
+    page: Page | None = None,
+    max_wait_ms: int = 120000,
+) -> None:
+    """Wait until the slicer header is not pending and values have settled."""
     dropdown = _slicer_dropdown(report_frame, slicer_label)
     dropdown.wait_for(state="visible", timeout=90000)
     dropdown.scroll_into_view_if_needed(timeout=10000)
-    page_wait_ms = 1500 if os.environ.get("GITHUB_ACTIONS") else 500
-    time.sleep(page_wait_ms / 1000)
+
+    deadline = time.monotonic() + max_wait_ms / 1000
+    last_reason = "unknown"
+    stable_reads = 0
+    required_stable = 3 if os.environ.get("GITHUB_ACTIONS") else 2
+
+    while time.monotonic() < deadline:
+        if dropdown.count() == 0:
+            last_reason = "not-found"
+            stable_reads = 0
+        else:
+            state = dropdown.first.evaluate(
+                """(el) => {
+                    if (el.querySelector('.slicer-header-pending-text, .slicer-header-pending-icon'))
+                        return { ready: false, reason: 'pending-header' };
+                    const container = el.closest('visual-container');
+                    if (container?.querySelector('[data-testid="visual-loading-spinner"]'))
+                        return { ready: false, reason: 'spinner' };
+                    return { ready: true, reason: 'ok' };
+                }"""
+            )
+            if not state.get("ready"):
+                last_reason = state.get("reason", "unknown")
+                stable_reads = 0
+            else:
+                stable_reads += 1
+                if stable_reads >= required_stable:
+                    settle_ms = 2500 if os.environ.get("GITHUB_ACTIONS") else 800
+                    if page is not None:
+                        page.wait_for_timeout(settle_ms)
+                    else:
+                        time.sleep(settle_ms / 1000)
+                    logger.info("Slicer data ready: %s", slicer_label)
+                    return
+
+        if stable_reads > 0:
+            logger.info(
+                'Slicer "%s" settling (%s/%s)', slicer_label, stable_reads, required_stable
+            )
+        elif last_reason != "unknown":
+            logger.info('Slicer "%s" still loading (%s)', slicer_label, last_reason)
+
+        if page is not None:
+            page.wait_for_timeout(500)
+        else:
+            time.sleep(0.5)
+
+    raise RuntimeError(
+        f'Slicer "{slicer_label}" data not ready after {max_wait_ms}ms ({last_reason})'
+    )
 
 
 def open_slicer_dropdown(
@@ -142,9 +197,9 @@ def open_slicer_dropdown(
     *,
     page: Page | None = None,
 ) -> None:
+    wait_for_slicer_ready(report_frame, slicer_label, page=page)
+
     dropdown = _slicer_dropdown(report_frame, slicer_label)
-    dropdown.wait_for(state="visible", timeout=90000)
-    dropdown.scroll_into_view_if_needed(timeout=10000)
 
     if page is not None:
         for _ in range(3):
@@ -154,6 +209,7 @@ def open_slicer_dropdown(
             page.wait_for_timeout(400)
 
     popup_wait_ms = 8000 if os.environ.get("GITHUB_ACTIONS") else 5000
+    max_attempts = 10 if os.environ.get("GITHUB_ACTIONS") else 6
     click_targets = (
         dropdown,
         dropdown.locator(".slicer-head-container"),
@@ -161,7 +217,7 @@ def open_slicer_dropdown(
         dropdown.locator('[role="combobox"]'),
     )
 
-    for attempt in range(6):
+    for attempt in range(max_attempts):
         if _slicer_popup_visible(report_frame):
             logger.info("Opened slicer dropdown: %s", slicer_label)
             return
@@ -183,6 +239,8 @@ def open_slicer_dropdown(
 
         if page is not None:
             page.wait_for_timeout(800)
+            if attempt == max_attempts // 2:
+                wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
     raise RuntimeError(f'Could not open slicer dropdown: "{slicer_label}"')
 
