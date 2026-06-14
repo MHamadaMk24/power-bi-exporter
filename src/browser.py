@@ -107,9 +107,25 @@ def click_navigation_button(report_frame: ReportHost, button_cfg: dict) -> None:
 
 
 def _slicer_dropdown(report_frame: ReportHost, slicer_label: str):
-    return report_frame.locator(
+    exact = report_frame.locator(
         f'[data-testid="slicer-dropdown"][aria-label="{slicer_label}"]'
     )
+    if exact.count() > 0:
+        return exact
+
+    fuzzy = report_frame.locator('[data-testid="slicer-dropdown"]').filter(
+        has=report_frame.locator(f'[aria-label*="{slicer_label}"]')
+    )
+    if fuzzy.count() > 0:
+        logger.info('Using fuzzy slicer match for "%s"', slicer_label)
+        return fuzzy
+
+    all_slicers = report_frame.locator('[data-testid="slicer-dropdown"]')
+    if all_slicers.count() == 1:
+        logger.info('Using only slicer on page for "%s"', slicer_label)
+        return all_slicers
+
+    return exact
 
 
 def wait_for_slicer_ready(report_frame: ReportHost, slicer_label: str) -> None:
@@ -255,9 +271,10 @@ def list_slicer_options(
     slicer_label: str,
     *,
     skip_values: list[str] | None = None,
+    page: Page | None = None,
 ) -> list[str]:
     skip = {value.strip().lower() for value in (skip_values or ["All"])}
-    open_slicer_dropdown(report_frame, slicer_label)
+    open_slicer_dropdown(report_frame, slicer_label, page=page)
 
     popup = report_frame.locator('[role="listbox"]').last
     popup.wait_for(state="visible", timeout=30000)

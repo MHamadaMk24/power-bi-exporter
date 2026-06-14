@@ -210,13 +210,17 @@ def resolve_filter_values(report_frame, page, filter_cfg: dict) -> list[str]:
     if test_value and not filter_cfg.get("export_all", False):
         return [test_value]
 
+    slicer_label = filter_cfg["slicer_label"]
+    wait_for_slicer_ready(report_frame, slicer_label)
+
     skip_values = filter_cfg.get("skip_values") or ["All"]
     options = list_slicer_options(
         report_frame,
-        filter_cfg["slicer_label"],
+        slicer_label,
         skip_values=skip_values,
+        page=page,
     )
-    close_slicer_dropdown(page, report_frame, filter_cfg["slicer_label"])
+    close_slicer_dropdown(page, report_frame, slicer_label)
     return options
 
 
@@ -406,6 +410,9 @@ def run_report_exports(
         report_frame,
         **_wait_cfg(load_cfg, page_waits, 0),
     )
+
+    slicer_label = filter_cfg["slicer_label"]
+    wait_for_slicer_ready(report_frame, slicer_label)
 
     filter_values = only_locations or resolve_filter_values(
         report_frame, page, filter_cfg
