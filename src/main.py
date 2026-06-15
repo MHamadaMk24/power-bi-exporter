@@ -264,6 +264,7 @@ def apply_filter(
     close_slicer_dropdown(page, report_frame, slicer_label)
     open_slicer_dropdown(report_frame, slicer_label, page=page)
     clear_slicer_selection(page, report_frame, slicer_label)
+    page.wait_for_timeout(500)
     open_slicer_dropdown(report_frame, slicer_label, page=page)
     filter_name = select_slicer_option(report_frame, filter_value)
     close_slicer_dropdown(page, report_frame, filter_cfg["slicer_label"])
@@ -501,11 +502,15 @@ def run_export(
     uploader = None if skip_sharepoint else _build_sharepoint_uploader(config)
     if skip_sharepoint:
         logger.info("SharePoint upload skipped (--skip-sharepoint)")
-    upload_after_each = config.get("sharepoint", {}).get("upload_after_each", True)
+    sp_cfg = config.get("sharepoint", {})
+    upload_after_each = sp_cfg.get("upload_after_each", True)
     default_sp_folder = (
-        SharePointConfig.from_env().target_folder
-        if SharePointConfig.from_env()
-        else os.environ.get("TARGET_FOLDER_PATH", "Daily_Reports").strip().strip("/")
+        sp_cfg.get("target_folder")
+        or (
+            SharePointConfig.from_env().target_folder
+            if SharePointConfig.from_env()
+            else os.environ.get("TARGET_FOLDER_PATH", "Daily_Reports").strip().strip("/")
+        )
     )
 
     pdf_paths: list[Path] = []

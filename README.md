@@ -1,6 +1,6 @@
 # Power BI Exporter
 
-Automates daily Power BI report exports: login, navigate report pages, capture screenshots per location filter, merge to PDF, and upload to SharePoint.
+Automates Power BI report exports (daily and weekly): login, navigate report pages, capture screenshots per location filter, merge to PDF, and upload to SharePoint.
 
 ## Local setup
 
@@ -12,25 +12,37 @@ playwright install chromium
 copy .env.example .env            # fill in credentials
 ```
 
-Run all daily reports:
+### Daily reports
 
 ```bash
 cd src
 python main.py
 ```
 
-Run one report:
+### Weekly reports
+
+```bash
+cd src
+python main.py --config config/weekly.yaml
+```
+
+Or from the project root: `run-weekly.bat`
+
+### Run one report or one mall
 
 ```bash
 python main.py --report skidata
-python main.py --config config/daily.yaml --report pass
+python main.py --config config/weekly.yaml --report pass
+python main.py --config config/weekly.yaml --report skidata --location "Alnoor Mall" --skip-sharepoint
 ```
 
-Test one mall (no SharePoint upload):
+## Config layout
 
-```bash
-python main.py --report skidata --location "Alnoor Mall" --skip-sharepoint
-```
+| File | Purpose | SharePoint folder |
+|------|---------|-------------------|
+| `config/daily.yaml` | Daily SKIDATA + Pass | `Daily_Reports` (from `.env` / secret) |
+| `config/weekly.yaml` | Weekly SKIDATA + Pass | `Weekly_Reports` (in config) |
+| `config/monthly.yaml` | Planned — monthly cadence | — |
 
 ## Saved browser session (GitHub cloud runners)
 
@@ -67,21 +79,33 @@ Keep `PBI_EMAIL` and `PBI_PASSWORD` as fallback if the session expires.
 
 Sessions expire (often every 2–4 weeks). When GitHub Actions fails on login, repeat steps 1–3.
 
-## GitHub Actions (cron-job.org)
+## Push to GitHub
 
-### 1. Push this repo to GitHub
+Your repo: `https://github.com/MHamadaMk24/power-bi-exporter`
 
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin https://github.com/YOUR_ORG/power-bi-exporter.git
+From the project folder in PowerShell:
+
+```powershell
+cd "c:\Users\Mohammed\Desktop\Projects\Power BI Exporter"
+
+git add config/weekly.yaml .github/workflows/export-weekly.yml src/ README.md run-weekly.bat
+git status
+
+git commit -m "Add weekly report export config and GitHub Actions workflow"
+
+git push origin main
+```
+
+If this is a **new machine** and `origin` is not set yet:
+
+```powershell
+git remote add origin https://github.com/MHamadaMk24/power-bi-exporter.git
 git push -u origin main
 ```
 
-### 2. Add repository secrets
+## GitHub repository secrets
 
-In **Settings → Secrets and variables → Actions**, add:
+In **Settings → Secrets and variables → Actions**, ensure these secrets exist (same for daily and weekly):
 
 | Secret | Description |
 |--------|-------------|
@@ -92,55 +116,74 @@ In **Settings → Secrets and variables → Actions**, add:
 | `CLIENT_SECRET` | App registration client secret |
 | `SHAREPOINT_SITE_NAME` | e.g. `https://tenant.sharepoint.com/sites/YourSite` |
 | `SHAREPOINT_DOC_LIB` | Document library name (default: `Documents`) |
-| `TARGET_FOLDER_PATH` | SharePoint folder, e.g. `Daily_Reports` |
-| `PLAYWRIGHT_STORAGE_STATE` | Base64 session from `encode_session.py` (required for cloud runners) |
+| `TARGET_FOLDER_PATH` | Default folder for daily exports, e.g. `Daily_Reports` |
+| `PLAYWRIGHT_STORAGE_STATE` | Base64 session from `encode_session.py` |
 
-### 3. Create a GitHub personal access token
+Weekly uploads use `Weekly_Reports` from `config/weekly.yaml` — no extra secret needed.
 
-Create a fine-grained or classic PAT with **repo** scope (needed for `repository_dispatch`).
+## GitHub personal access token (for cron-job.org)
 
-### 4. Configure cron-job.org
+1. GitHub → **Settings** → **Developer settings** → **Personal access tokens**
+2. Create a token with **repo** scope (classic) or repository **Contents** + **Metadata** access (fine-grained)
+3. Copy the token — you will use it in cron-job.org as `Bearer YOUR_GITHUB_PAT`
 
-Create a cron job with:
+## cron-job.org setup
 
-- **URL:** `https://api.github.com/repos/YOUR_ORG/power-bi-exporter/dispatches`
-- **Method:** `POST`
-- **Schedule:** your daily time (cron-job.org uses your timezone)
-- **Headers:**
-  - `Accept: application/vnd.github+json`
-  - `Authorization: Bearer YOUR_GITHUB_PAT`
-  - `X-GitHub-Api-Version: 2022-11-28`
-- **Body (JSON):**
+Create **one cron job per cadence** (daily and weekly). Both hit the same API URL; only the JSON body differs.
 
-```json
-{"event_type": "export-daily"}
-```
+**Shared settings**
 
-You can also trigger manually from GitHub: **Actions → Export Daily Reports → Run workflow**.
+| Field | Value |
+|-------|-------|
+| **URL** | `https://api.github.com/repos/MHamadaMk24/power-bi-exporter/dispatches` |
+| **Method** | `POST` |
+| **Header** | `Accept: application/vnd.github+json` |
+| **Header** | `Authorization: Bearer YOUR_GITHUB_PAT` |
+| **Header** | `X-GitHub-Api-Version: 2022-11-28` |
+| **Content-Type** | `application/json` |
 
-### 5. Verify
+### Daily cron job
 
-After the job runs, check **Actions** for logs and download PDFs from the workflow artifacts if SharePoint upload fails.
+| Field | Value |
+|-------|-------|
+| **Title** | Power BI Daily Export |
+| **Schedule** | e.g. every day at 8:00 AM (your timezone) |
+| **Body** | `{"event_type":"export-daily"}` |
 
-## Config layout
+### Weekly cron job
 
-| File | Purpose |
-|------|---------|
-| `config/daily.yaml` | Daily SKIDATA + Pass reports (active) |
-| `config/weekly.yaml` | Planned — weekly cadence |
-| `config/monthly.yaml` | Planned — monthly cadence |
+| Field | Value |
+|-------|-------|
+| **Title** | Power BI Weekly Export |
+| **Schedule** | e.g. every Monday at 8:00 AM (your timezone) |
+| **Body** | `{"event_type":"export-weekly"}` |
+
+### Manual test (before cron)
+
+After pushing, open GitHub → **Actions**:
+
+- **Export Daily Reports** → Run workflow
+- **Export Weekly Reports** → Run workflow
+
+Check logs and PDF artifacts if SharePoint upload fails.
 
 ## Project structure
 
 ```
-config/daily.yaml       Report definitions and timing
-src/main.py             Entry point
-src/auth.py             Power BI login
-src/save_session.py     Save browser session locally
-src/encode_session.py   Encode session for GitHub secret
-src/session_state.py    Load session in main.py / CI
-src/browser.py          Navigation and screenshots
-src/load_detection.py   Wait for visuals to finish loading
-src/export.py           PDF merge
-src/sharepoint.py       SharePoint upload via Microsoft Graph
+config/daily.yaml           Daily SKIDATA + Pass
+config/weekly.yaml          Weekly SKIDATA + Pass
+.github/workflows/
+  export-daily.yml          Triggered by export-daily
+  export-weekly.yml         Triggered by export-weekly
+src/main.py                 Entry point
+src/auth.py                 Power BI login
+src/save_session.py         Save browser session locally
+src/encode_session.py         Encode session for GitHub secret
+src/session_state.py        Load session in main.py / CI
+src/browser.py              Navigation and screenshots
+src/load_detection.py       Wait for visuals to finish loading
+src/export.py               PDF merge
+src/sharepoint.py           SharePoint upload via Microsoft Graph
+run.bat                     Run daily export locally
+run-weekly.bat              Run weekly export locally
 ```

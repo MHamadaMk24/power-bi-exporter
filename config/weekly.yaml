@@ -1,0 +1,69 @@
+# Weekly report exports (skidata + pass)
+load_detection:
+  entry_wait_ms: 15000
+  default_page_wait_ms: 30000
+  page_waits:
+    3: 120000
+    4: 60000
+    5: 45000
+    7: 60000
+  pre_screenshot_max_wait_ms: 120000
+  min_wait_ms: 800
+  settle_after_action_ms: 4000
+  max_wait_ms: 180000
+  network_idle_ms: 500
+  poll_interval_ms: 400
+  render_stable_reads: 2
+
+output_dir: "output/weekly"
+
+sharepoint:
+  enabled: true
+  upload_after_each: true
+  target_folder: "Weekly_Reports"
+
+browser:
+  headless: false
+  slow_mo: 0
+  viewport_width: 1920
+  viewport_height: 1080
+
+reports:
+  - name: skidata
+    label: SKIDATA weekly report
+    enabled: true
+    report_url: "https://app.powerbi.com/reportEmbed?reportId=54335a15-5d09-4b6c-ba76-d80d741fedc8&autoAuth=true&ctid=20470f14-0ce8-493d-93b5-1a696aa4bc40"
+    navigation:
+      entry_button:
+        path_width: "184.27586206896552"
+        index: 1
+      page_buttons:
+        path_width: "51.994091580502214"
+        forward_index: 0
+        back_index: 1
+        additional_pages: 6
+    filters:
+      slicer_label: "Location"
+      export_all: true
+      skip_values:
+        - All
+        - (Blank)
+
+  - name: pass
+    label: Pass weekly report
+    enabled: true
+    report_url: "https://app.powerbi.com/reportEmbed?reportId=4ab416f9-3f61-4b8f-b88d-2fd1b250ba29&autoAuth=true&ctid=20470f14-0ce8-493d-93b5-1a696aa4bc40"
+    navigation:
+      entry_button:
+        path_width: "184.27586206896552"
+        index: 1
+      page_buttons:
+        path_width: "37.51724137931034"
+        forward_index: 0
+        back_index: 1
+        additional_pages: 2
+    filters:
+      slicer_label: "Location_Name"
+      export_all: true
+      skip_values:
+        - All

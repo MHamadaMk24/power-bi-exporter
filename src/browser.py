@@ -248,20 +248,23 @@ def open_slicer_dropdown(
 def clear_slicer_selection(
     page: Page, report_frame: ReportHost, slicer_label: str
 ) -> None:
-    """Clear the slicer when 'All' or prior selections are still active."""
+    """Clear active slicer selections before choosing a single location."""
     dropdown = _slicer_dropdown(report_frame, slicer_label)
     current = dropdown.locator(".slicer-restatement").inner_text().strip()
-    if not current or current.lower() == "all":
-        clear_btn = report_frame.locator('[aria-label="Clear selections"]')
-        if clear_btn.count() > 0:
-            try:
-                clear_btn.first.click(force=True)
-                page.wait_for_timeout(500)
-                logger.info("Cleared slicer selection")
-                return
-            except Exception:
-                logger.debug("Clear selections button not clickable")
+    if not current:
+        return
 
+    clear_btn = report_frame.locator('[aria-label="Clear selections"]')
+    if clear_btn.count() > 0:
+        try:
+            clear_btn.first.click(force=True)
+            page.wait_for_timeout(500)
+            logger.info("Cleared slicer selection")
+            return
+        except Exception:
+            logger.debug("Clear selections button not clickable")
+
+    if current.lower() == "all":
         popup = report_frame.locator('[role="listbox"]').last
         all_option = popup.locator('[role="option"]:has-text("All")')
         if all_option.count() > 0:
@@ -270,17 +273,44 @@ def clear_slicer_selection(
             logger.info("Deselected slicer 'All' option")
 
 
+def _find_slicer_option(popup, option_text: str):
+    target = option_text.strip()
+    options = popup.locator('[role="option"]')
+    for i in range(options.count()):
+        text = options.nth(i).inner_text().strip()
+        if text == target or text.lower() == target.lower():
+            return options.nth(i), text
+    return None, None
+
+
 def select_slicer_option(report_frame: ReportHost, option_text: str) -> str:
-    popup = report_frame.locator('[role="listbox"]').last
-    popup.wait_for(state="visible", timeout=30000)
+    deadline = time.monotonic() + 30
+    last_count = 0
 
-    option = popup.locator(f'[role="option"]:has-text("{option_text}")')
-    if option.count() == 0:
-        raise RuntimeError(f'Slicer option not found: "{option_text}"')
+    while time.monotonic() < deadline:
+        popup = report_frame.locator('[role="listbox"]').last
+        if popup.count() == 0 or not popup.is_visible():
+            time.sleep(0.4)
+            continue
 
-    option.first.click()
-    logger.info("Selected slicer option: %s", option_text)
-    return option_text
+        option, matched_text = _find_slicer_option(popup, option_text)
+        if option is not None:
+            option.click()
+            logger.info("Selected slicer option: %s", matched_text)
+            return matched_text
+
+        count = popup.locator('[role="option"]').count()
+        if count != last_count:
+            last_count = count
+        elif count > 0:
+            try:
+                popup.evaluate("el => { el.scrollTop += 250; }")
+            except Exception:
+                pass
+
+        time.sleep(0.4)
+
+    raise RuntimeError(f'Slicer option not found: "{option_text}"')
 
 
 def _slicer_popup_visible(report_frame: ReportHost) -> bool:
