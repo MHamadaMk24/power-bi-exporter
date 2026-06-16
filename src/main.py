@@ -15,6 +15,7 @@ from browser import (
     click_navigation_button,
     clear_slicer_selection,
     close_slicer_dropdown,
+    effective_slicer_skip_values,
     get_report_frame,
     list_slicer_options,
     open_slicer_dropdown,
@@ -202,22 +203,29 @@ def screenshot_report_area(page, report_frame, output_path: Path) -> None:
 
 
 def resolve_filter_values(report_frame, page, filter_cfg: dict) -> list[str]:
+    skip = effective_slicer_skip_values(filter_cfg.get("skip_values"))
+
     configured = filter_cfg.get("values") or []
     if configured:
-        return [str(value).strip() for value in configured if str(value).strip()]
+        return [
+            str(value).strip()
+            for value in configured
+            if str(value).strip() and str(value).strip().lower() not in skip
+        ]
 
     test_value = (filter_cfg.get("test_value") or "").strip()
     if test_value and not filter_cfg.get("export_all", False):
-        return [test_value]
+        if test_value.lower() not in skip:
+            return [test_value]
+        return []
 
     slicer_label = filter_cfg["slicer_label"]
     wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
-    skip_values = filter_cfg.get("skip_values") or ["All"]
     options = list_slicer_options(
         report_frame,
         slicer_label,
-        skip_values=skip_values,
+        skip_values=filter_cfg.get("skip_values"),
         page=page,
     )
     close_slicer_dropdown(page, report_frame, slicer_label)

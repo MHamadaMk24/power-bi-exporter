@@ -46,6 +46,7 @@ reports:
       export_all: true
       skip_values:
         - All
+        - (Blank)
 
   - name: pass
     label: Pass report
@@ -67,3 +68,4 @@ reports:
         - "Al Olaya Mall"
       skip_values:
         - All
+        - (Blank)

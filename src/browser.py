@@ -397,6 +397,13 @@ def close_slicer_dropdown(
     logger.info("Closed slicer dropdown: %s", slicer_label)
 
 
+def effective_slicer_skip_values(skip_values: list[str] | None = None) -> set[str]:
+    """Slicer options to exclude — always includes All and blank data rows."""
+    skip = {value.strip().lower() for value in (skip_values or ["All"])}
+    skip.update({"(blank)", "blank"})
+    return skip
+
+
 def list_slicer_options(
     report_frame: ReportHost,
     slicer_label: str,
@@ -404,7 +411,7 @@ def list_slicer_options(
     skip_values: list[str] | None = None,
     page: Page | None = None,
 ) -> list[str]:
-    skip = {value.strip().lower() for value in (skip_values or ["All"])}
+    skip = effective_slicer_skip_values(skip_values)
     open_slicer_dropdown(report_frame, slicer_label, page=page)
 
     popup = report_frame.locator('[role="listbox"]').last
