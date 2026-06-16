@@ -64,6 +64,8 @@ reports:
         additional_pages: 2
     filters:
       slicer_label: "Location_Name"
-      export_all: true
+      values:
+        - "Al Hamra Mall"
+        - "Al Olaya Mall"
       skip_values:
         - All

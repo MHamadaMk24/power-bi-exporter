@@ -381,6 +381,7 @@ def run_report_exports(
     email: str,
     password: str,
     only_locations: list[str] | None = None,
+    force_navigate: bool = False,
 ) -> list[Path]:
     report_name = report.get("name", "report")
     report_title = report_label(report)
@@ -398,12 +399,15 @@ def run_report_exports(
     )
 
     logger.info("Opening report URL")
-    if not _report_content_ready(page, report["report_url"]):
+    if force_navigate or not _report_content_ready(page, report["report_url"]):
+        if force_navigate:
+            logger.info("Force-navigating to report: %s", _embed_report_id(report["report_url"]))
         navigate_to_report(page, report["report_url"], email, password)
     else:
         logger.info("Already on target report: %s", _embed_report_id(report["report_url"]))
     report_frame = get_report_frame(page)
-    page.wait_for_timeout(3000)
+    settle_ms = 5000 if force_navigate and os.environ.get("GITHUB_ACTIONS") else 3000
+    page.wait_for_timeout(settle_ms)
 
     logger.info("Clicking entry button")
     click_navigation_button(report_frame, nav_cfg["entry_button"])
@@ -533,7 +537,7 @@ def run_export(
 
         navigate_to_report(page, reports[0]["report_url"], email, password)
 
-        for report in reports:
+        for index, report in enumerate(reports):
             load_cfg = merge_load_detection(config, report)
             report_pdfs = run_report_exports(
                 page,
@@ -546,6 +550,7 @@ def run_export(
                 email=email,
                 password=password,
                 only_locations=only_locations,
+                force_navigate=index > 0,
             )
             pdf_paths.extend(report_pdfs)
 

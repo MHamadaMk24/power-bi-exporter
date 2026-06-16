@@ -191,6 +191,61 @@ def wait_for_slicer_ready(
     )
 
 
+def _try_open_slicer_popup(
+    report_frame: ReportHost,
+    dropdown,
+    *,
+    page: Page | None,
+    popup_wait_ms: int,
+) -> bool:
+    click_targets = (
+        dropdown,
+        dropdown.locator(".slicer-head-container"),
+        dropdown.locator(".slicer-header"),
+        dropdown.locator(".slicer-text"),
+        dropdown.locator(".slicer-restatement"),
+        dropdown.locator('[role="combobox"]'),
+        dropdown.locator(".glyphicon-chevron-down"),
+    )
+
+    for target in click_targets:
+        if target.count() == 0:
+            continue
+        try:
+            target.first.scroll_into_view_if_needed(timeout=10000)
+            target.first.click(force=True)
+        except Exception:
+            logger.debug("Slicer click failed on %s", target)
+        if _slicer_popup_visible(report_frame):
+            return True
+        popup = report_frame.locator('[role="listbox"]').last
+        try:
+            popup.wait_for(state="visible", timeout=popup_wait_ms)
+            return True
+        except Exception:
+            continue
+
+    if page is not None and dropdown.count() > 0:
+        try:
+            dropdown.first.focus()
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(400)
+            if _slicer_popup_visible(report_frame):
+                return True
+            page.keyboard.press("Space")
+            page.wait_for_timeout(400)
+            if _slicer_popup_visible(report_frame):
+                return True
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(400)
+            if _slicer_popup_visible(report_frame):
+                return True
+        except Exception:
+            logger.debug("Keyboard slicer open failed")
+
+    return _slicer_popup_visible(report_frame)
+
+
 def open_slicer_dropdown(
     report_frame: ReportHost,
     slicer_label: str,
@@ -202,43 +257,31 @@ def open_slicer_dropdown(
     dropdown = _slicer_dropdown(report_frame, slicer_label)
 
     if page is not None:
-        for _ in range(3):
+        for _ in range(5):
             if not _slicer_popup_visible(report_frame):
                 break
             page.keyboard.press("Escape")
             page.wait_for_timeout(400)
 
-    popup_wait_ms = 8000 if os.environ.get("GITHUB_ACTIONS") else 5000
-    max_attempts = 10 if os.environ.get("GITHUB_ACTIONS") else 6
-    click_targets = (
-        dropdown,
-        dropdown.locator(".slicer-head-container"),
-        dropdown.locator(".slicer-header"),
-        dropdown.locator('[role="combobox"]'),
-    )
+    if page is not None and os.environ.get("GITHUB_ACTIONS"):
+        page.wait_for_timeout(1500)
+
+    popup_wait_ms = 10000 if os.environ.get("GITHUB_ACTIONS") else 5000
+    max_attempts = 12 if os.environ.get("GITHUB_ACTIONS") else 6
 
     for attempt in range(max_attempts):
         if _slicer_popup_visible(report_frame):
             logger.info("Opened slicer dropdown: %s", slicer_label)
             return
 
-        for target in click_targets:
-            if target.count() == 0:
-                continue
-            try:
-                target.first.click(force=True)
-            except Exception:
-                logger.debug("Slicer click failed (attempt %s)", attempt + 1)
-            popup = report_frame.locator('[role="listbox"]').last
-            try:
-                popup.wait_for(state="visible", timeout=popup_wait_ms)
-                logger.info("Opened slicer dropdown: %s", slicer_label)
-                return
-            except Exception:
-                continue
+        if _try_open_slicer_popup(
+            report_frame, dropdown, page=page, popup_wait_ms=popup_wait_ms
+        ):
+            logger.info("Opened slicer dropdown: %s", slicer_label)
+            return
 
         if page is not None:
-            page.wait_for_timeout(800)
+            page.wait_for_timeout(1000)
             if attempt == max_attempts // 2:
                 wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
