@@ -1,0 +1,65 @@
+name: Export Monthly Reports
+
+on:
+  repository_dispatch:
+    types: [export-monthly]
+  workflow_dispatch:
+
+concurrency:
+  group: export-monthly
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install chromium --with-deps
+
+      - name: Verify project layout
+        run: |
+          test -f config/monthly.yaml
+          echo "config/monthly.yaml found"
+
+      - name: Restore Playwright session
+        env:
+          PLAYWRIGHT_STORAGE_STATE: ${{ secrets.PLAYWRIGHT_STORAGE_STATE }}
+        run: python src/restore_session.py
+
+      - name: Run monthly export
+        working-directory: src
+        env:
+          PLAYWRIGHT_STORAGE_STATE_PATH: ${{ github.workspace }}/playwright-state/session.json
+          PBI_EMAIL: ${{ secrets.PBI_EMAIL }}
+          PBI_PASSWORD: ${{ secrets.PBI_PASSWORD }}
+          TENANT_ID: ${{ secrets.TENANT_ID }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          SHAREPOINT_SITE_NAME: ${{ secrets.SHAREPOINT_SITE_NAME }}
+          SHAREPOINT_DOC_LIB: ${{ secrets.SHAREPOINT_DOC_LIB }}
+          TARGET_FOLDER_PATH: ${{ secrets.TARGET_FOLDER_PATH }}
+        run: python main.py --config config/monthly.yaml
+
+      - name: Upload PDF artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-pdfs-${{ github.run_id }}
+          path: output/monthly/*.pdf
+          if-no-files-found: warn
+          retention-days: 7

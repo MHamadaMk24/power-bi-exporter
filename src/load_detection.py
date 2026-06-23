@@ -24,16 +24,19 @@ LOADING_SELECTORS = (
     ".skeleton",
 )
 
-# Inspect every visual-container: initialized, real SVG/canvas data, not just spinners.
-EVALUATE_VISUAL_LOAD_STATE_SCRIPT = """
-() => {
+# Shared visual readiness helpers (used by page-level and per-visual checks).
+_VISUAL_EVAL_HELPERS = """
   function isExcluded(visual) {
     const cls = visual.className || '';
-    return /visual-slicer|visual-actionButton|visual-image|visual-shape|visual-textbox|visual-pageNavigator/.test(cls);
+    if (/visual-slicer|visual-actionButton|visual-image|visual-shape|visual-textbox|visual-pageNavigator/.test(cls)) {
+      return true;
+    }
+    return !!visual.querySelector('.slicer-header, .slicerBody, .slicer-restatement');
   }
 
   function isKpiCardVisual(visual) {
-    return !!visual.querySelector('.kpi, .card, .multiRowCard');
+    const cls = visual.className || '';
+    return /visual-(card|multiRowCard|kpi)/i.test(cls);
   }
 
   function isChartVisual(visual) {
@@ -76,65 +79,183 @@ EVALUATE_VISUAL_LOAD_STATE_SCRIPT = """
     return h3?.textContent?.trim().slice(0, 60) || '';
   }
 
-  const items = [];
-  let pending = 0;
-  const containers = Array.from(document.querySelectorAll('visual-container'));
-
-  for (const container of containers) {
-    const visual = container.querySelector('[data-testid="visual"]');
-    const rect = container.getBoundingClientRect();
-    if (rect.width < 40 || rect.height < 40) continue;
-
+  function inspectVisualContainer(container) {
+    const visual = container?.querySelector('[data-testid="visual"]');
+    const rect = container?.getBoundingClientRect() || { width: 0, height: 0 };
+    const layoutW = container?.offsetWidth || 0;
+    const layoutH = container?.offsetHeight || 0;
+    const width = Math.max(rect.width, layoutW);
+    const height = Math.max(rect.height, layoutH);
     const title = getTitle(container, visual);
-    const base = { title, h: Math.round(rect.height), w: Math.round(rect.width) };
+    const base = {
+      title,
+      h: Math.round(height),
+      w: Math.round(width),
+      skipped: false,
+      ready: true,
+      reason: '',
+    };
 
-    if (!visual) {
-      pending++;
-      items.push({ ...base, reason: 'missing-visual-node' });
-      continue;
+    if (width < 40 || height < 40) {
+      const chart = isChartVisual(visual);
+      const tableLike = !!visual.querySelector('table, .treemap');
+      if (!chart && !tableLike) {
+        return { ...base, skipped: true };
+      }
+      return { ...base, ready: false, reason: 'deferred-not-in-view' };
     }
 
-    if (isExcluded(visual)) continue;
+    if (!visual) {
+      return { ...base, ready: false, reason: 'missing-visual-node' };
+    }
+
+    if (isExcluded(visual)) {
+      return { ...base, skipped: true };
+    }
 
     const spinner = visual.querySelector('[data-testid="visual-loading-spinner"]');
     if (spinner) {
       const style = window.getComputedStyle(spinner);
       if (style.display !== 'none' && style.visibility !== 'hidden') {
-        pending++;
-        items.push({ ...base, reason: 'spinner' });
-        continue;
+        return { ...base, ready: false, reason: 'spinner' };
       }
     }
 
     if (visual.querySelector('[aria-busy="true"]')) {
-      pending++;
-      items.push({ ...base, reason: 'aria-busy' });
-      continue;
+      return { ...base, ready: false, reason: 'aria-busy' };
     }
 
-    if (isKpiCardVisual(visual)) continue;
+    if (isKpiCardVisual(visual)) {
+      return { ...base, skipped: true };
+    }
 
     if (!visual.hasAttribute('initialized')) {
-      pending++;
-      items.push({ ...base, reason: 'not-initialized' });
-      continue;
+      return { ...base, ready: false, reason: 'not-initialized' };
     }
 
     const hasData = visualHasRenderedData(visual);
     const chart = isChartVisual(visual);
-    const largeSlot = rect.height >= 80;
+    const largeSlot = height >= 80;
 
     if ((chart || largeSlot) && !hasData) {
-      pending++;
-      items.push({
+      return {
         ...base,
+        ready: false,
         reason: chart ? 'chart-no-data' : 'large-no-data',
         classes: (visual.className || '').slice(0, 80),
+      };
+    }
+
+    return base;
+  }
+"""
+
+# Inspect every visual-container: initialized, real SVG/canvas data, not just spinners.
+EVALUATE_VISUAL_LOAD_STATE_SCRIPT = (
+    """
+() => {
+"""
+    + _VISUAL_EVAL_HELPERS
+    + """
+  const items = [];
+  let pending = 0;
+  const containers = Array.from(document.querySelectorAll('visual-container'));
+
+  for (const container of containers) {
+    const state = inspectVisualContainer(container);
+    if (state.skipped) continue;
+    if (!state.ready) {
+      pending++;
+      items.push({
+        title: state.title,
+        h: state.h,
+        w: state.w,
+        reason: state.reason,
+        classes: state.classes,
       });
     }
   }
 
   return { pending, items };
+}
+"""
+)
+
+VISUAL_ORDINAL_SCRIPT = (
+    """
+(args) => {
+  const mode = args.mode;
+  const ordinal = args.ordinal;
+"""
+    + _VISUAL_EVAL_HELPERS
+    + """
+  function sortedDataVisuals() {
+    const containers = Array.from(document.querySelectorAll('visual-container'));
+    const out = [];
+    containers.forEach((container, index) => {
+      const visual = container.querySelector('[data-testid="visual"]');
+      if (!visual) return;
+      if (isExcluded(visual)) return;
+      if (isKpiCardVisual(visual)) return;
+      const rect = container.getBoundingClientRect();
+      out.push({
+        container,
+        index,
+        top: Math.round(rect.top + window.scrollY),
+        left: Math.round(rect.left + window.scrollX),
+        title: getTitle(container, visual) || 'untitled',
+      });
+    });
+    out.sort((a, b) => a.top - b.top || a.left - b.left);
+    return out;
+  }
+
+  if (mode === 'list') {
+    return sortedDataVisuals().map((item, itemOrdinal) => ({
+      ordinal: itemOrdinal,
+      index: item.index,
+      top: item.top,
+      left: item.left,
+      title: item.title,
+    }));
+  }
+
+  if (mode === 'scroll') {
+    const item = sortedDataVisuals()[ordinal];
+    if (!item) return false;
+    item.container.scrollIntoView({ block: 'center', behavior: 'instant' });
+    return true;
+  }
+
+  const item = sortedDataVisuals()[ordinal];
+  if (!item) {
+    return { ready: false, skipped: true, reason: 'missing-container', title: '' };
+  }
+  const state = inspectVisualContainer(item.container);
+  return {
+    ordinal,
+    index: item.index,
+    title: state.title,
+    ready: state.skipped || state.ready,
+    skipped: state.skipped,
+    reason: state.reason,
+    h: state.h,
+    w: state.w,
+    classes: state.classes,
+  };
+}
+"""
+)
+
+SCROLL_REPORT_TOP_SCRIPT = """
+() => {
+  for (const selector of ['div.reportContainer', 'div.visualContainerHost']) {
+    const el = document.querySelector(selector);
+    if (el) {
+      el.scrollTop = 0;
+    }
+  }
+  window.scrollTo(0, 0);
 }
 """
 
@@ -186,6 +307,34 @@ def evaluate_visual_load_state(report_frame: ReportHost) -> dict:
     return _evaluate_on_report(report_frame, EVALUATE_VISUAL_LOAD_STATE_SCRIPT)
 
 
+def _as_visual_list(result) -> list[dict]:
+    if not result:
+        return []
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict) and "ordinal" in result:
+        return [result]
+    return []
+
+
+def _visual_ordinal(report_frame: ReportHost, mode: str, ordinal: int = 0):
+    return report_frame.locator("body").evaluate(
+        VISUAL_ORDINAL_SCRIPT, {"mode": mode, "ordinal": ordinal}
+    )
+
+
+def list_monitored_visuals(report_frame: ReportHost) -> list[dict]:
+    return _as_visual_list(_visual_ordinal(report_frame, "list"))
+
+
+def scroll_visual_by_ordinal(report_frame: ReportHost, ordinal: int) -> None:
+    _visual_ordinal(report_frame, "scroll", ordinal)
+
+
+def evaluate_visual_by_ordinal(report_frame: ReportHost, ordinal: int) -> dict:
+    return _visual_ordinal(report_frame, "eval", ordinal)
+
+
 def count_pending_charts(report_frame: ReportHost) -> int:
     return int(evaluate_visual_load_state(report_frame).get("pending", 0))
 
@@ -205,6 +354,87 @@ def _log_pending_visuals(page_label: str, state: dict) -> None:
         )
 
 
+def _remaining_ms(deadline: float) -> float:
+    return max(0.0, (deadline - time.monotonic()) * 1000)
+
+
+def _wait_for_visuals_sequential(
+    page: Page,
+    report_frame: ReportHost,
+    *,
+    page_label: str,
+    deadline: float,
+    poll_interval_ms: int,
+    per_visual_max_ms: int = 15000,
+    scroll_settle_ms: int = 400,
+) -> int:
+    """Scroll each data visual into view (top-to-bottom) and wait until it is ready."""
+    initial = list_monitored_visuals(report_frame)
+    if not initial:
+        logger.info(
+            "%s sequential visual load: no chart visuals indexed; using bulk deferred scroll",
+            page_label,
+        )
+        _scroll_for_deferred_rendering(page, report_frame)
+        return count_pending_charts(report_frame)
+
+    logger.info(
+        "%s sequential visual load: preparing %s visual(s)",
+        page_label,
+        len(initial),
+    )
+
+    for ordinal in range(len(initial)):
+        if _remaining_ms(deadline) <= 0:
+            break
+
+        visuals = list_monitored_visuals(report_frame)
+        if ordinal >= len(visuals):
+            break
+
+        title = visuals[ordinal].get("title") or "untitled"
+        visual_deadline = min(
+            deadline,
+            time.monotonic() + min(per_visual_max_ms, _remaining_ms(deadline)) / 1000,
+        )
+
+        try:
+            scroll_visual_by_ordinal(report_frame, ordinal)
+        except Exception:
+            logger.debug("%s could not scroll visual %s", page_label, title)
+            continue
+
+        page.wait_for_timeout(min(scroll_settle_ms, int(_remaining_ms(deadline))))
+
+        while time.monotonic() < visual_deadline:
+            state = evaluate_visual_by_ordinal(report_frame, ordinal)
+            if state.get("ready"):
+                logger.info("%s visual ready: %s", page_label, title)
+                break
+            if state.get("reason") == "missing-container":
+                break
+            page.wait_for_timeout(min(poll_interval_ms, int(_remaining_ms(visual_deadline))))
+        else:
+            state = evaluate_visual_by_ordinal(report_frame, ordinal)
+            if not state.get("ready"):
+                logger.info(
+                    "%s visual still pending: %s (%sx%s) — %s",
+                    page_label,
+                    title,
+                    state.get("w"),
+                    state.get("h"),
+                    state.get("reason") or "unknown",
+                )
+
+    try:
+        _evaluate_on_report(report_frame, SCROLL_REPORT_TOP_SCRIPT)
+        page.wait_for_timeout(200)
+    except Exception:
+        logger.debug("Report scroll-to-top skipped")
+
+    return count_pending_charts(report_frame)
+
+
 def wait_until_charts_ready(
     page: Page,
     report_frame: ReportHost,
@@ -215,26 +445,38 @@ def wait_until_charts_ready(
 ) -> None:
     """Final gate before screenshot — wait until no chart visuals are pending."""
     started = time.monotonic()
+    deadline = started + max_wait_ms / 1000
 
     while True:
         _scroll_for_deferred_rendering(page, report_frame)
-        state = evaluate_visual_load_state(report_frame)
-        pending = state.get("pending", 0)
+        pending = _wait_for_visuals_sequential(
+            page,
+            report_frame,
+            page_label=page_label,
+            deadline=deadline,
+            poll_interval_ms=poll_interval_ms,
+        )
         if pending == 0:
             logger.info("%s pre-screenshot check passed", page_label)
             return
 
         elapsed_ms = (time.monotonic() - started) * 1000
         if elapsed_ms >= max_wait_ms:
+            state = evaluate_visual_load_state(report_frame)
             logger.warning(
                 "%s pre-screenshot timed out (%s visual(s) still pending)",
                 page_label,
-                pending,
+                state.get("pending", pending),
             )
             _log_pending_visuals(page_label, state)
             return
 
-        logger.info("%s pre-screenshot: %s visual(s) still loading", page_label, pending)
+        logger.info(
+            "%s pre-screenshot: %s visual(s) still loading — retrying sequential pass",
+            page_label,
+            pending,
+        )
+        state = evaluate_visual_load_state(report_frame)
         _log_pending_visuals(page_label, state)
         page.wait_for_timeout(poll_interval_ms)
 
