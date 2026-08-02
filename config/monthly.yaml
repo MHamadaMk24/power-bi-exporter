@@ -32,7 +32,7 @@ reports:
   - name: skidata
     label: SKIDATA monthly report
     enabled: true
-    report_url: "https://app.powerbi.com/reportEmbed?reportId=54335a15-5d09-4b6c-ba76-d80d741fedc8&autoAuth=true&ctid=20470f14-0ce8-493d-93b5-1a696aa4bc40"
+    report_url: "https://app.powerbi.com/reportEmbed?reportId=3f7329c1-f15d-4dfb-b7b3-9b71d744adb7&autoAuth=true&ctid=20470f14-0ce8-493d-93b5-1a696aa4bc40"
     navigation:
       entry_button:
         path_width: "184.27586206896552"
