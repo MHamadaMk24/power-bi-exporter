@@ -27,6 +27,7 @@ LOADING_SELECTORS = (
 # Shared visual readiness helpers (used by page-level and per-visual checks).
 _VISUAL_EVAL_HELPERS = """
   function isExcluded(visual) {
+    if (!visual) return false;
     const cls = visual.className || '';
     if (/visual-slicer|visual-actionButton|visual-image|visual-shape|visual-textbox|visual-pageNavigator/.test(cls)) {
       return true;
@@ -35,11 +36,13 @@ _VISUAL_EVAL_HELPERS = """
   }
 
   function isKpiCardVisual(visual) {
+    if (!visual) return false;
     const cls = visual.className || '';
     return /visual-(card|multiRowCard|kpi)/i.test(cls);
   }
 
   function isChartVisual(visual) {
+    if (!visual) return false;
     const cls = visual.className || '';
     return /visual-(lineChart|clusteredColumnChart|clusteredBarChart|barChart|areaChart|pieChart|donutChart|scatterChart|waterfallChart|funnelChart|gauge|treemap|tableEx|pivotTable|matrix|ribbonChart|stackedAreaChart|hundredPercentStackedColumnChart|stackedColumnChart|map|filledMap|shapeMap|azureMap|keyDriversVisual)/.test(cls);
   }
@@ -62,6 +65,7 @@ _VISUAL_EVAL_HELPERS = """
   }
 
   function visualHasRenderedData(visual) {
+    if (!visual) return false;
     if (visual.querySelector('table tbody tr')) return true;
     if (visual.querySelector('.treemap .node')) return true;
     const canvas = visual.querySelector('canvas');
@@ -96,6 +100,14 @@ _VISUAL_EVAL_HELPERS = """
       reason: '',
     };
 
+    // Missing visual node: skip tiny placeholders; keep large slots pending.
+    if (!visual) {
+      if (width < 40 || height < 40) {
+        return { ...base, skipped: true };
+      }
+      return { ...base, ready: false, reason: 'missing-visual-node' };
+    }
+
     if (width < 40 || height < 40) {
       const chart = isChartVisual(visual);
       const tableLike = !!visual.querySelector('table, .treemap');
@@ -103,10 +115,6 @@ _VISUAL_EVAL_HELPERS = """
         return { ...base, skipped: true };
       }
       return { ...base, ready: false, reason: 'deferred-not-in-view' };
-    }
-
-    if (!visual) {
-      return { ...base, ready: false, reason: 'missing-visual-node' };
     }
 
     if (isExcluded(visual)) {
