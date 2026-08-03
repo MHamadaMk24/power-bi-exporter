@@ -287,6 +287,52 @@ def apply_filter(
     return filter_name
 
 
+def _apply_filter_with_reload(
+    page,
+    report_frame,
+    *,
+    report: dict,
+    filter_cfg: dict,
+    nav_cfg: dict,
+    load_cfg: dict,
+    page_waits: dict[int, int],
+    filter_value: str,
+    email: str,
+    password: str,
+):
+    """Apply slicer filter; on CI slicer-open failure, reload report entry and retry once."""
+    slicer_label = filter_cfg["slicer_label"]
+    try:
+        filter_name = apply_filter(
+            page, report_frame, filter_cfg, load_cfg, page_waits, filter_value
+        )
+        return filter_name, report_frame
+    except RuntimeError as exc:
+        if "Could not open slicer dropdown" not in str(exc):
+            raise
+        logger.warning(
+            'Slicer "%s" failed to open for %s — reloading report and retrying once',
+            slicer_label,
+            filter_value,
+        )
+        report_frame = open_report_entry(
+            page,
+            report["report_url"],
+            nav_cfg,
+            load_cfg,
+            page_waits,
+            email=email,
+            password=password,
+            slicer_label=slicer_label,
+        )
+        if os.environ.get("GITHUB_ACTIONS"):
+            page.wait_for_timeout(5000)
+        filter_name = apply_filter(
+            page, report_frame, filter_cfg, load_cfg, page_waits, filter_value
+        )
+        return filter_name, report_frame
+
+
 def capture_page_screenshots(
     page,
     report_frame,
@@ -333,9 +379,20 @@ def export_filter_pdf(
     nav_cfg: dict,
     load_cfg: dict,
     page_waits: dict[int, int],
-) -> Path:
-    filter_name = apply_filter(
-        page, report_frame, filter_cfg, load_cfg, page_waits, filter_value
+    email: str,
+    password: str,
+):
+    filter_name, report_frame = _apply_filter_with_reload(
+        page,
+        report_frame,
+        report=report,
+        filter_cfg=filter_cfg,
+        nav_cfg=nav_cfg,
+        load_cfg=load_cfg,
+        page_waits=page_waits,
+        filter_value=filter_value,
+        email=email,
+        password=password,
     )
     safe_name = sanitize_filename(filter_name)
 
@@ -346,7 +403,7 @@ def export_filter_pdf(
 
     pdf_path = output_dir / f"{safe_name}.pdf"
     merge_images_to_pdf(screenshots, pdf_path)
-    return pdf_path
+    return pdf_path, report_frame
 
 
 def _upload_pdf(
@@ -414,7 +471,7 @@ def run_report_exports(
     else:
         logger.info("Already on target report: %s", _embed_report_id(report["report_url"]))
     report_frame = get_report_frame(page)
-    settle_ms = 5000 if force_navigate and os.environ.get("GITHUB_ACTIONS") else 3000
+    settle_ms = 8000 if force_navigate and os.environ.get("GITHUB_ACTIONS") else 3000
     page.wait_for_timeout(settle_ms)
 
     logger.info("Clicking entry button")
@@ -470,7 +527,7 @@ def run_report_exports(
                 password=password,
                 slicer_label=slicer_label,
             )
-        pdf_path = export_filter_pdf(
+        pdf_path, report_frame = export_filter_pdf(
             page,
             report_frame,
             filter_value,
@@ -480,6 +537,8 @@ def run_report_exports(
             nav_cfg=nav_cfg,
             load_cfg=load_cfg,
             page_waits=page_waits,
+            email=email,
+            password=password,
         )
         pdf_paths.append(pdf_path)
         if uploader and upload_after_each:

@@ -26,50 +26,102 @@ LOADING_SELECTORS = (
 
 # Shared visual readiness helpers (used by page-level and per-visual checks).
 _VISUAL_EVAL_HELPERS = """
-  function isExcluded(visual) {
-    if (!visual) return false;
-    const cls = visual.className || '';
+  function visualClassName(node) {
+    if (!node) return '';
+    const typed = node.matches?.('[class*="visual-"]')
+      ? node
+      : node.querySelector?.('[data-testid="visual-content-desc"], .visual[class*="visual-"]');
+    return ((typed && typed.className) || node.className || '').toString();
+  }
+
+  function resolveVisualNodes(container) {
+    const host = container?.querySelector('visual-modern[data-testid="visual"], [data-testid="visual"]')
+      || container?.querySelector('.visualWrapper')
+      || null;
+    const typeNode = container?.querySelector('[data-testid="visual-content-desc"], .visual[class*="visual-"]')
+      || host;
+    return { host, typeNode };
+  }
+
+  function isExcluded(node) {
+    if (!node) return false;
+    const cls = visualClassName(node);
     if (/visual-slicer|visual-actionButton|visual-image|visual-shape|visual-textbox|visual-pageNavigator/.test(cls)) {
       return true;
     }
-    return !!visual.querySelector('.slicer-header, .slicerBody, .slicer-restatement');
+    return !!node.querySelector?.('.slicer-header, .slicerBody, .slicer-restatement');
   }
 
-  function isKpiCardVisual(visual) {
-    if (!visual) return false;
-    const cls = visual.className || '';
-    return /visual-(card|multiRowCard|kpi)/i.test(cls);
+  function isKpiCardVisual(node) {
+    if (!node) return false;
+    return /visual-(card|multiRowCard|kpi)/i.test(visualClassName(node));
   }
 
-  function isChartVisual(visual) {
-    if (!visual) return false;
-    const cls = visual.className || '';
-    return /visual-(lineChart|clusteredColumnChart|clusteredBarChart|barChart|areaChart|pieChart|donutChart|scatterChart|waterfallChart|funnelChart|gauge|treemap|tableEx|pivotTable|matrix|ribbonChart|stackedAreaChart|hundredPercentStackedColumnChart|stackedColumnChart|map|filledMap|shapeMap|azureMap|keyDriversVisual)/.test(cls);
+  function isChartVisual(node) {
+    if (!node) return false;
+    const cls = visualClassName(node);
+    return /visual-(lineChart|clusteredColumnChart|clusteredBarChart|barChart|columnChart|areaChart|area|pieChart|donutChart|scatterChart|waterfallChart|funnelChart|funnel|gauge|treemap|tableEx|pivotTable|matrix|ribbonChart|stackedAreaChart|hundredPercentStackedColumnChart|hundredPercentStackedBarChart|stackedColumnChart|stackedBarChart|lineClusteredColumnComboChart|map|filledMap|shapeMap|azureMap|keyDriversVisual|decompositionTreeVisual)/i.test(cls)
+      || /visual-.*Chart/i.test(cls);
   }
 
   function svgHasRealData(svg) {
     if (!svg) return false;
-    for (const path of svg.querySelectorAll('path')) {
-      if ((path.getAttribute('d') || '').length > 30) return true;
+    // Prefer plot/series groups so axis/grid paths alone do not count as "loaded".
+    const plot = svg.querySelector(
+      '.plot, .plotArea, g.shapes, g.series, .highcharts-series, .highcharts-markers, [class*="plot"]'
+    );
+    const root = plot || svg;
+
+    for (const path of root.querySelectorAll('path')) {
+      const d = path.getAttribute('d') || '';
+      if (d.length < 40) continue;
+      const fill = (path.getAttribute('fill') || '').toLowerCase();
+      const stroke = (path.getAttribute('stroke') || '').toLowerCase();
+      if (fill && fill !== 'none' && fill !== 'transparent') return true;
+      // Line series: stroked paths with multiple move commands.
+      if (stroke && stroke !== 'none' && (d.match(/M/gi) || []).length >= 2) return true;
     }
-    for (const rect of svg.querySelectorAll('rect')) {
+    for (const rect of root.querySelectorAll('rect')) {
       const w = parseFloat(rect.getAttribute('width') || '0');
       const h = parseFloat(rect.getAttribute('height') || '0');
       if (w > 8 && h > 8) return true;
     }
-    if (svg.querySelectorAll('circle').length >= 2) return true;
-    for (const text of svg.querySelectorAll('text')) {
-      if (/[0-9]/.test((text.textContent || '').trim())) return true;
+    if (root.querySelectorAll('circle, ellipse').length >= 2) return true;
+    for (const text of root.querySelectorAll('text')) {
+      const t = (text.textContent || '').trim();
+      if (/[0-9]{1,3}([,][0-9]{3})*([.][0-9]+)?%?/.test(t) && t.length <= 24) {
+        if (root.querySelectorAll('path, rect, circle').length >= 3) return true;
+      }
     }
     return false;
+  }
+
+  function canvasLooksPainted(canvas) {
+    if (!canvas || canvas.width < 8 || canvas.height < 8) return false;
+    try {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return canvas.width > 1 && canvas.height > 1;
+      const w = Math.min(canvas.width, 80);
+      const h = Math.min(canvas.height, 80);
+      const data = ctx.getImageData(0, 0, w, h).data;
+      let opaque = 0;
+      for (let i = 3; i < data.length; i += 16) {
+        if (data[i] > 8) opaque++;
+        if (opaque >= 12) return true;
+      }
+      return false;
+    } catch (err) {
+      return canvas.width > 1 && canvas.height > 1;
+    }
   }
 
   function visualHasRenderedData(visual) {
     if (!visual) return false;
     if (visual.querySelector('table tbody tr')) return true;
     if (visual.querySelector('.treemap .node')) return true;
-    const canvas = visual.querySelector('canvas');
-    if (canvas && canvas.width > 1 && canvas.height > 1) return true;
+    for (const canvas of visual.querySelectorAll('canvas')) {
+      if (canvasLooksPainted(canvas)) return true;
+    }
     for (const svg of visual.querySelectorAll('svg')) {
       if (svgHasRealData(svg)) return true;
     }
@@ -83,14 +135,23 @@ _VISUAL_EVAL_HELPERS = """
     return h3?.textContent?.trim().slice(0, 60) || '';
   }
 
+  function listLayoutContainers() {
+    // Modern Power BI sizes live on div.visualContainer; custom <visual-container> is often 0x0.
+    const modern = Array.from(document.querySelectorAll('div.visualContainer'));
+    if (modern.length) return modern;
+    return Array.from(document.querySelectorAll('visual-container, visual-container-repeat'));
+  }
+
   function inspectVisualContainer(container) {
-    const visual = container?.querySelector('[data-testid="visual"]');
+    const { host, typeNode } = resolveVisualNodes(container);
+    const visual = host || typeNode;
     const rect = container?.getBoundingClientRect() || { width: 0, height: 0 };
     const layoutW = container?.offsetWidth || 0;
     const layoutH = container?.offsetHeight || 0;
     const width = Math.max(rect.width, layoutW);
     const height = Math.max(rect.height, layoutH);
     const title = getTitle(container, visual);
+    const classes = visualClassName(typeNode || visual).slice(0, 80);
     const base = {
       title,
       h: Math.round(height),
@@ -98,6 +159,7 @@ _VISUAL_EVAL_HELPERS = """
       skipped: false,
       ready: true,
       reason: '',
+      classes,
     };
 
     // Missing visual node: skip tiny placeholders; keep large slots pending.
@@ -109,19 +171,22 @@ _VISUAL_EVAL_HELPERS = """
     }
 
     if (width < 40 || height < 40) {
-      const chart = isChartVisual(visual);
+      const chart = isChartVisual(typeNode || visual);
       const tableLike = !!visual.querySelector('table, .treemap');
-      if (!chart && !tableLike) {
+      // True deferred charts are partially clipped (one side still large).
+      // Tiny 0-size/placeholder nodes should be ignored.
+      if ((!chart && !tableLike) || (width < 40 && height < 40)) {
         return { ...base, skipped: true };
       }
       return { ...base, ready: false, reason: 'deferred-not-in-view' };
     }
 
-    if (isExcluded(visual)) {
+    if (isExcluded(typeNode || visual) || isExcluded(container)) {
       return { ...base, skipped: true };
     }
 
-    const spinner = visual.querySelector('[data-testid="visual-loading-spinner"]');
+    const spinner = visual.querySelector('[data-testid="visual-loading-spinner"]')
+      || container.querySelector('[data-testid="visual-loading-spinner"]');
     if (spinner) {
       const style = window.getComputedStyle(spinner);
       if (style.display !== 'none' && style.visibility !== 'hidden') {
@@ -129,20 +194,22 @@ _VISUAL_EVAL_HELPERS = """
       }
     }
 
-    if (visual.querySelector('[aria-busy="true"]')) {
+    if (visual.querySelector('[aria-busy="true"]') || container.querySelector('[aria-busy="true"]')) {
       return { ...base, ready: false, reason: 'aria-busy' };
     }
 
-    if (isKpiCardVisual(visual)) {
+    if (isKpiCardVisual(typeNode || visual)) {
       return { ...base, skipped: true };
     }
 
-    if (!visual.hasAttribute('initialized')) {
+    // Older embeds set [initialized]; newer builds often omit it — only enforce when present on page.
+    const initUsed = !!document.querySelector('[data-testid="visual"][initialized], visual-modern[initialized]');
+    if (initUsed && !visual.hasAttribute('initialized') && !(typeNode && typeNode.hasAttribute('initialized'))) {
       return { ...base, ready: false, reason: 'not-initialized' };
     }
 
-    const hasData = visualHasRenderedData(visual);
-    const chart = isChartVisual(visual);
+    const hasData = visualHasRenderedData(visual) || visualHasRenderedData(typeNode);
+    const chart = isChartVisual(typeNode || visual);
     const largeSlot = height >= 80;
 
     if ((chart || largeSlot) && !hasData) {
@@ -150,7 +217,6 @@ _VISUAL_EVAL_HELPERS = """
         ...base,
         ready: false,
         reason: chart ? 'chart-no-data' : 'large-no-data',
-        classes: (visual.className || '').slice(0, 80),
       };
     }
 
@@ -167,7 +233,7 @@ EVALUATE_VISUAL_LOAD_STATE_SCRIPT = (
     + """
   const items = [];
   let pending = 0;
-  const containers = Array.from(document.querySelectorAll('visual-container'));
+  const containers = listLayoutContainers();
 
   for (const container of containers) {
     const state = inspectVisualContainer(container);
@@ -191,21 +257,28 @@ EVALUATE_VISUAL_LOAD_STATE_SCRIPT = (
 
 VISUAL_ORDINAL_SCRIPT = (
     """
-(args) => {
+(el, args) => {
+  // locator.evaluate passes the matched element first, then the arg object.
   const mode = args.mode;
   const ordinal = args.ordinal;
 """
     + _VISUAL_EVAL_HELPERS
     + """
   function sortedDataVisuals() {
-    const containers = Array.from(document.querySelectorAll('visual-container'));
+    const containers = listLayoutContainers();
     const out = [];
     containers.forEach((container, index) => {
-      const visual = container.querySelector('[data-testid="visual"]');
+      const { host, typeNode } = resolveVisualNodes(container);
+      const visual = host || typeNode;
       if (!visual) return;
-      if (isExcluded(visual)) return;
-      if (isKpiCardVisual(visual)) return;
+      if (isExcluded(typeNode || visual) || isExcluded(container)) return;
+      if (isKpiCardVisual(typeNode || visual)) return;
       const rect = container.getBoundingClientRect();
+      const layoutW = container.offsetWidth || 0;
+      const layoutH = container.offsetHeight || 0;
+      const width = Math.max(rect.width, layoutW);
+      const height = Math.max(rect.height, layoutH);
+      if (width < 40 && height < 40 && !isChartVisual(typeNode || visual)) return;
       out.push({
         container,
         index,
@@ -269,15 +342,15 @@ SCROLL_REPORT_TOP_SCRIPT = """
 
 SCROLL_DEFERRED_SCRIPT = """
 () => {
-  for (const selector of ['div.reportContainer', 'div.visualContainerHost']) {
+  for (const selector of ['div.reportContainer', 'div.visualContainerHost', 'div.displayArea']) {
     const el = document.querySelector(selector);
     if (el) {
       el.scrollTop = el.scrollHeight;
       el.scrollTop = 0;
     }
   }
-  document.querySelectorAll('[data-testid="visual"]').forEach((v) => {
-    v.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  document.querySelectorAll('div.visualContainer, [data-testid="visual"]').forEach((v) => {
+    try { v.scrollIntoView({ block: 'nearest', behavior: 'instant' }); } catch (e) {}
   });
 }
 """
@@ -384,7 +457,15 @@ def _wait_for_visuals_sequential(
             page_label,
         )
         _scroll_for_deferred_rendering(page, report_frame)
-        return count_pending_charts(report_frame)
+        page.wait_for_timeout(min(800, int(_remaining_ms(deadline))))
+        initial = list_monitored_visuals(report_frame)
+        if not initial:
+            return count_pending_charts(report_frame)
+        logger.info(
+            "%s sequential visual load: found %s visual(s) after bulk scroll",
+            page_label,
+            len(initial),
+        )
 
     logger.info(
         "%s sequential visual load: preparing %s visual(s)",
@@ -464,13 +545,15 @@ def wait_until_charts_ready(
             deadline=deadline,
             poll_interval_ms=poll_interval_ms,
         )
+        # Re-check page-wide state; sequential pass may have missed late mounts.
+        state = evaluate_visual_load_state(report_frame)
+        pending = max(pending, int(state.get("pending", 0)))
         if pending == 0:
             logger.info("%s pre-screenshot check passed", page_label)
             return
 
         elapsed_ms = (time.monotonic() - started) * 1000
         if elapsed_ms >= max_wait_ms:
-            state = evaluate_visual_load_state(report_frame)
             logger.warning(
                 "%s pre-screenshot timed out (%s visual(s) still pending)",
                 page_label,
@@ -484,7 +567,6 @@ def wait_until_charts_ready(
             page_label,
             pending,
         )
-        state = evaluate_visual_load_state(report_frame)
         _log_pending_visuals(page_label, state)
         page.wait_for_timeout(poll_interval_ms)
 

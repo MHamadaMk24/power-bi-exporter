@@ -264,10 +264,10 @@ def open_slicer_dropdown(
             page.wait_for_timeout(400)
 
     if page is not None and os.environ.get("GITHUB_ACTIONS"):
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(2500)
 
-    popup_wait_ms = 10000 if os.environ.get("GITHUB_ACTIONS") else 5000
-    max_attempts = 12 if os.environ.get("GITHUB_ACTIONS") else 6
+    popup_wait_ms = 12000 if os.environ.get("GITHUB_ACTIONS") else 5000
+    max_attempts = 16 if os.environ.get("GITHUB_ACTIONS") else 6
 
     for attempt in range(max_attempts):
         if _slicer_popup_visible(report_frame):
@@ -281,9 +281,24 @@ def open_slicer_dropdown(
             return
 
         if page is not None:
-            page.wait_for_timeout(1000)
-            if attempt == max_attempts // 2:
+            page.wait_for_timeout(1000 if attempt < 8 else 1500)
+            if attempt in (max_attempts // 3, (2 * max_attempts) // 3):
+                logger.info(
+                    'Slicer "%s" still closed after %s attempts — re-settling',
+                    slicer_label,
+                    attempt + 1,
+                )
+                try:
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                page.wait_for_timeout(800)
                 wait_for_slicer_ready(report_frame, slicer_label, page=page)
+                dropdown = _slicer_dropdown(report_frame, slicer_label)
+                try:
+                    dropdown.first.scroll_into_view_if_needed(timeout=10000)
+                except Exception:
+                    pass
 
     raise RuntimeError(f'Could not open slicer dropdown: "{slicer_label}"')
 
