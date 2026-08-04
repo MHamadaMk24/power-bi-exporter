@@ -52,7 +52,7 @@ reports:
   - name: pass
     label: Pass weekly report
     enabled: true
-    report_url: "https://app.powerbi.com/reportEmbed?reportId=4ab416f9-3f61-4b8f-b88d-2fd1b250ba29&autoAuth=true&ctid=20470f14-0ce8-493d-93b5-1a696aa4bc40"
+    report_url: "https://app.powerbi.com/view?r=eyJrIjoiNDJmMWVmZDctMGRhNS00MDk2LTg0ZjctZjdlZThjMmZkMGRiIiwidCI6IjIwNDcwZjE0LTBjZTgtNDkzZC05M2I1LTFhNjk2YWE0YmM0MCIsImMiOjl9"
     navigation:
       entry_button:
         path_width: "184.27586206896552"
