@@ -72,6 +72,8 @@ def get_report_frame(page: Page, timeout_ms: int = 120000) -> FrameLocator | Pag
 def _iframe_src_fragment(url: str) -> str:
     if "reportEmbed" in url:
         return "reportEmbed"
+    if "/view" in url:
+        return "view"
     if "powerbi" in url.lower():
         return "powerbi"
     return url.split("/")[2] if "/" in url else "iframe"

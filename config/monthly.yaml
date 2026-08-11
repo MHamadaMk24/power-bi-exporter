@@ -1,16 +1,16 @@
 # Monthly report exports (skidata + pass)
 load_detection:
-  entry_wait_ms: 15000
-  default_page_wait_ms: 30000
+  entry_wait_ms: 7500
+  default_page_wait_ms: 15000
   page_waits:
-    3: 120000
-    4: 60000
-    5: 45000
-    7: 60000
-  pre_screenshot_max_wait_ms: 120000
-  min_wait_ms: 800
-  settle_after_action_ms: 4000
-  max_wait_ms: 180000
+    3: 60000
+    4: 30000
+    5: 22500
+    7: 30000
+  pre_screenshot_max_wait_ms: 60000
+  min_wait_ms: 400
+  settle_after_action_ms: 2000
+  max_wait_ms: 90000
   network_idle_ms: 500
   poll_interval_ms: 400
   render_stable_reads: 2
@@ -32,7 +32,7 @@ reports:
   - name: skidata
     label: SKIDATA monthly report
     enabled: true
-    report_url: "https://app.powerbi.com/reportEmbed?reportId=3f7329c1-f15d-4dfb-b7b3-9b71d744adb7&autoAuth=true&ctid=20470f14-0ce8-493d-93b5-1a696aa4bc40"
+    report_url: "https://app.powerbi.com/view?r=eyJrIjoiYTBmYTY0MTgtMGQ2My00ODM1LTg5ZjQtZDc0Y2YxNzU0YWNkIiwidCI6IjIwNDcwZjE0LTBjZTgtNDkzZC05M2I1LTFhNjk2YWE0YmM0MCIsImMiOjl9"
     navigation:
       entry_button:
         path_width: "184.27586206896552"

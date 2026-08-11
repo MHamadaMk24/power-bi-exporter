@@ -49,7 +49,12 @@ DEFAULT_CONFIG_CANDIDATES = (
 def _embed_report_id(url: str) -> str:
     if not url:
         return ""
-    return parse_qs(urlparse(url).query).get("reportId", [""])[0]
+    query = parse_qs(urlparse(url).query)
+    if report_id := query.get("reportId", [""])[0]:
+        return report_id
+    if token := query.get("r", [""])[0]:
+        return token[:36]
+    return ""
 
 
 def _report_content_ready(page, report_url: str) -> bool:
