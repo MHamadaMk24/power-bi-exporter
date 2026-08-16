@@ -148,8 +148,21 @@ def merge_load_detection(config: dict, report: dict) -> dict:
     return {**global_cfg, **report_cfg}
 
 
+COMBINED_PDF_NAMES = {
+    "skidata": "SKIDATA Combined Report",
+    "pass": "Pass Combined Report",
+}
+
+
 def report_label(report: dict) -> str:
     return (report.get("label") or report.get("name") or "report").strip()
+
+
+def combined_pdf_stem(report: dict) -> str:
+    name = (report.get("name") or "").strip().lower()
+    if name in COMBINED_PDF_NAMES:
+        return COMBINED_PDF_NAMES[name]
+    return f"{report_label(report)} Combined Report"
 
 
 def report_work_dir(base_output: Path, report: dict, location_name: str) -> Path:
@@ -373,6 +386,26 @@ def capture_page_screenshots(
     return screenshots
 
 
+def export_unfiltered_pdf(
+    page,
+    report_frame,
+    *,
+    output_dir: Path,
+    report: dict,
+    nav_cfg: dict,
+    load_cfg: dict,
+    page_waits: dict[int, int],
+) -> Path:
+    title = combined_pdf_stem(report)
+    work_dir = report_work_dir(output_dir, report, title)
+    screenshots = capture_page_screenshots(
+        page, report_frame, work_dir, nav_cfg, load_cfg, page_waits
+    )
+    pdf_path = output_dir / f"{sanitize_filename(title)}.pdf"
+    merge_images_to_pdf(screenshots, pdf_path)
+    return pdf_path
+
+
 def export_filter_pdf(
     page,
     report_frame,
@@ -490,6 +523,33 @@ def run_report_exports(
     slicer_label = filter_cfg["slicer_label"]
     wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
+    pdf_paths: list[Path] = []
+    export_combined = filter_cfg.get("export_combined", True) and not only_locations
+    if export_combined:
+        logger.info("=== %s | Combined report (no location filter) ===", report_title)
+        combined_path = export_unfiltered_pdf(
+            page,
+            report_frame,
+            output_dir=output_dir,
+            report=report,
+            nav_cfg=nav_cfg,
+            load_cfg=load_cfg,
+            page_waits=page_waits,
+        )
+        pdf_paths.append(combined_path)
+        if uploader and upload_after_each:
+            _upload_pdf(uploader, combined_path, sp_folder)
+        report_frame = open_report_entry(
+            page,
+            report["report_url"],
+            nav_cfg,
+            load_cfg,
+            page_waits,
+            email=email,
+            password=password,
+            slicer_label=slicer_label,
+        )
+
     filter_values = only_locations or resolve_filter_values(
         report_frame, page, filter_cfg
     )
@@ -500,7 +560,6 @@ def run_report_exports(
         ", ".join(filter_values),
     )
 
-    slicer_label = filter_cfg["slicer_label"]
     report_frame = open_report_entry(
         page,
         report["report_url"],
@@ -512,7 +571,6 @@ def run_report_exports(
         slicer_label=slicer_label,
     )
 
-    pdf_paths: list[Path] = []
     for index, filter_value in enumerate(filter_values):
         logger.info(
             "=== %s | Export %s/%s: %s ===",
