@@ -151,6 +151,7 @@ def merge_load_detection(config: dict, report: dict) -> dict:
 COMBINED_PDF_NAMES = {
     "skidata": "SKIDATA Combined Report",
     "pass": "Pass Combined Report",
+    "valet": "Valet Report",
 }
 
 
@@ -159,10 +160,17 @@ def report_label(report: dict) -> str:
 
 
 def combined_pdf_stem(report: dict) -> str:
+    if pdf_name := (report.get("pdf_name") or "").strip():
+        return pdf_name
     name = (report.get("name") or "").strip().lower()
     if name in COMBINED_PDF_NAMES:
         return COMBINED_PDF_NAMES[name]
     return f"{report_label(report)} Combined Report"
+
+
+def report_export_combined_only(report: dict) -> bool:
+    filters = report.get("filters") or {}
+    return bool(report.get("export_combined_only") or filters.get("export_combined_only"))
 
 
 def report_work_dir(base_output: Path, report: dict, location_name: str) -> Path:
@@ -265,7 +273,8 @@ def open_report_entry(
     navigate_to_report(page, report_url, email, password)
     report_frame = get_report_frame(page)
     page.wait_for_timeout(3000)
-    click_navigation_button(report_frame, nav_cfg["entry_button"])
+    if not nav_cfg.get("skip_entry"):
+        click_navigation_button(report_frame, nav_cfg["entry_button"])
     wait_for_report_ready(
         page,
         report_frame,
@@ -489,7 +498,8 @@ def run_report_exports(
     report_name = report.get("name", "report")
     report_title = report_label(report)
     nav_cfg = report["navigation"]
-    filter_cfg = report["filters"]
+    filter_cfg = report.get("filters") or {}
+    export_combined_only = report_export_combined_only(report)
     page_waits = build_page_waits(load_cfg)
     output_dir.mkdir(parents=True, exist_ok=True)
     sp_folder = default_sharepoint_folder
@@ -512,16 +522,25 @@ def run_report_exports(
     settle_ms = 8000 if force_navigate and os.environ.get("GITHUB_ACTIONS") else 3000
     page.wait_for_timeout(settle_ms)
 
-    logger.info("Clicking entry button")
-    click_navigation_button(report_frame, nav_cfg["entry_button"])
+    if nav_cfg.get("skip_entry"):
+        logger.info("Skipping entry button (report opens on target view)")
+    else:
+        logger.info("Clicking entry button")
+        click_navigation_button(report_frame, nav_cfg["entry_button"])
     wait_for_report_ready(
         page,
         report_frame,
         **_wait_cfg(load_cfg, page_waits, 0),
     )
 
-    slicer_label = filter_cfg["slicer_label"]
-    wait_for_slicer_ready(report_frame, slicer_label, page=page)
+    slicer_label = filter_cfg.get("slicer_label")
+    if export_combined_only and not filter_cfg.get("export_combined", True):
+        raise RuntimeError(
+            f'Report "{report_name}" with export_combined_only requires export_combined: true'
+        )
+
+    if slicer_label:
+        wait_for_slicer_ready(report_frame, slicer_label, page=page)
 
     pdf_paths: list[Path] = []
     export_combined = filter_cfg.get("export_combined", True) and not only_locations
@@ -539,6 +558,11 @@ def run_report_exports(
         pdf_paths.append(combined_path)
         if uploader and upload_after_each:
             _upload_pdf(uploader, combined_path, sp_folder)
+        if export_combined_only:
+            if uploader and not upload_after_each and pdf_paths:
+                for pdf_path in pdf_paths:
+                    _upload_pdf(uploader, pdf_path, sp_folder)
+            return pdf_paths
         report_frame = open_report_entry(
             page,
             report["report_url"],
@@ -548,6 +572,11 @@ def run_report_exports(
             email=email,
             password=password,
             slicer_label=slicer_label,
+        )
+
+    if not slicer_label:
+        raise RuntimeError(
+            f'Report "{report_name}" requires filters.slicer_label for per-location exports'
         )
 
     filter_values = only_locations or resolve_filter_values(

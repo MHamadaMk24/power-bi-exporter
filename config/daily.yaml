@@ -1,4 +1,4 @@
-# Daily report exports (skidata + pass)
+# Daily report exports (skidata + pass + valet)
 load_detection:
   entry_wait_ms: 7500
   default_page_wait_ms: 15000
@@ -69,3 +69,22 @@ reports:
       skip_values:
         - All
         - (Blank)
+
+  - name: valet
+    label: Valet Report
+    enabled: true
+    pdf_name: "Valet Report"
+    report_url: "https://app.powerbi.com/view?r=eyJrIjoiMWU4MDYxYmMtM2EyMi00ODlkLTg4NzItYTRkN2M3MzQwOGJhIiwidCI6IjIwNDcwZjE0LTBjZTgtNDkzZC05M2I1LTFhNjk2YWE0YmM0MCIsImMiOjl9"
+    navigation:
+      entry_button:
+        path_width: "258.37442899794"
+        index: 0
+      page_buttons:
+        path_width: "48.903654485049834"
+        forward_index: 0
+        back_index: 1
+        additional_pages: 4
+    filters:
+      slicer_label: "Location"
+      export_combined: true
+      export_combined_only: true
