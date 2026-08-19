@@ -589,17 +589,6 @@ def run_report_exports(
         ", ".join(filter_values),
     )
 
-    report_frame = open_report_entry(
-        page,
-        report["report_url"],
-        nav_cfg,
-        load_cfg,
-        page_waits,
-        email=email,
-        password=password,
-        slicer_label=slicer_label,
-    )
-
     for index, filter_value in enumerate(filter_values):
         logger.info(
             "=== %s | Export %s/%s: %s ===",
@@ -608,17 +597,16 @@ def run_report_exports(
             len(filter_values),
             filter_value,
         )
-        if index > 0:
-            report_frame = open_report_entry(
-                page,
-                report["report_url"],
-                nav_cfg,
-                load_cfg,
-                page_waits,
-                email=email,
-                password=password,
-                slicer_label=slicer_label,
-            )
+        report_frame = open_report_entry(
+            page,
+            report["report_url"],
+            nav_cfg,
+            load_cfg,
+            page_waits,
+            email=email,
+            password=password,
+            slicer_label=slicer_label,
+        )
         pdf_path, report_frame = export_filter_pdf(
             page,
             report_frame,
