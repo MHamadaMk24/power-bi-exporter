@@ -21,7 +21,9 @@ from browser import (
     open_slicer_dropdown,
     sanitize_filename,
     select_slicer_option,
+    slicer_selection_text,
     wait_for_slicer_ready,
+    wait_for_slicer_selection,
 )
 
 from export import merge_images_to_pdf
@@ -295,14 +297,66 @@ def apply_filter(
     filter_value: str,
 ) -> str:
     slicer_label = filter_cfg["slicer_label"]
+    last_error: RuntimeError | None = None
+
+    for attempt in range(2):
+        try:
+            return _apply_filter_once(
+                page,
+                report_frame,
+                filter_cfg,
+                load_cfg,
+                page_waits,
+                filter_value,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt == 0:
+                logger.warning(
+                    'Filter "%s" did not stick (%s) — retrying once',
+                    filter_value,
+                    exc,
+                )
+                wait_for_slicer_ready(report_frame, slicer_label, page=page)
+            else:
+                raise
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f'Failed to apply filter "{filter_value}"')
+
+
+def _apply_filter_once(
+    page,
+    report_frame,
+    filter_cfg: dict,
+    load_cfg: dict,
+    page_waits: dict[int, int],
+    filter_value: str,
+) -> str:
+    slicer_label = filter_cfg["slicer_label"]
     wait_for_slicer_ready(report_frame, slicer_label, page=page)
-    close_slicer_dropdown(page, report_frame, slicer_label)
+    close_slicer_dropdown(page, report_frame, slicer_label, allow_escape=True)
     open_slicer_dropdown(report_frame, slicer_label, page=page)
     clear_slicer_selection(page, report_frame, slicer_label)
     page.wait_for_timeout(500)
     open_slicer_dropdown(report_frame, slicer_label, page=page)
-    filter_name = select_slicer_option(report_frame, filter_value)
-    close_slicer_dropdown(page, report_frame, filter_cfg["slicer_label"])
+    select_slicer_option(report_frame, filter_value)
+
+    selection = wait_for_slicer_selection(
+        report_frame,
+        slicer_label,
+        filter_value,
+        page=page,
+    )
+    close_slicer_dropdown(page, report_frame, slicer_label, allow_escape=False)
+    wait_for_slicer_selection(
+        report_frame,
+        slicer_label,
+        filter_value,
+        page=page,
+        max_wait_ms=15000,
+    )
 
     wait_for_report_ready(
         page,
@@ -310,8 +364,15 @@ def apply_filter(
         pending_selector=".slicer-header-pending-text",
         **_wait_cfg(load_cfg, page_waits, 1),
     )
-    close_slicer_dropdown(page, report_frame, filter_cfg["slicer_label"])
-    return filter_name
+    close_slicer_dropdown(page, report_frame, slicer_label, allow_escape=False)
+
+    final_selection = slicer_selection_text(report_frame, slicer_label)
+    if not final_selection or final_selection.lower() != filter_value.strip().lower():
+        raise RuntimeError(
+            f'Slicer "{slicer_label}" shows "{final_selection}" after load, '
+            f'expected "{filter_value}"'
+        )
+    return selection
 
 
 def _apply_filter_with_reload(
@@ -335,12 +396,14 @@ def _apply_filter_with_reload(
         )
         return filter_name, report_frame
     except RuntimeError as exc:
-        if "Could not open slicer dropdown" not in str(exc):
+        message = str(exc)
+        if "Could not open slicer dropdown" not in message and "expected" not in message:
             raise
         logger.warning(
-            'Slicer "%s" failed to open for %s — reloading report and retrying once',
+            'Slicer "%s" failed for %s (%s) — reloading report and retrying once',
             slicer_label,
             filter_value,
+            exc,
         )
         report_frame = open_report_entry(
             page,

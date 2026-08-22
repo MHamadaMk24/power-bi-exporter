@@ -305,12 +305,53 @@ def open_slicer_dropdown(
     raise RuntimeError(f'Could not open slicer dropdown: "{slicer_label}"')
 
 
+def slicer_selection_text(report_frame: ReportHost, slicer_label: str) -> str:
+    dropdown = _slicer_dropdown(report_frame, slicer_label)
+    if dropdown.count() == 0:
+        return ""
+    restatement = dropdown.locator(".slicer-restatement")
+    if restatement.count() == 0:
+        return ""
+    return restatement.first.inner_text().strip()
+
+
+def selection_matches(actual: str, expected: str) -> bool:
+    return actual.strip().lower() == expected.strip().lower()
+
+
+def wait_for_slicer_selection(
+    report_frame: ReportHost,
+    slicer_label: str,
+    expected: str,
+    *,
+    page: Page | None = None,
+    max_wait_ms: int = 30000,
+) -> str:
+    """Wait until the slicer header shows the expected location."""
+    deadline = time.monotonic() + max_wait_ms / 1000
+    last_seen = ""
+
+    while time.monotonic() < deadline:
+        last_seen = slicer_selection_text(report_frame, slicer_label)
+        if selection_matches(last_seen, expected):
+            logger.info('Slicer "%s" confirmed: %s', slicer_label, last_seen)
+            return last_seen
+        if page is not None:
+            page.wait_for_timeout(400)
+        else:
+            time.sleep(0.4)
+
+    raise RuntimeError(
+        f'Slicer "{slicer_label}" shows "{last_seen}" but expected "{expected}"'
+    )
+
+
 def clear_slicer_selection(
     page: Page, report_frame: ReportHost, slicer_label: str
 ) -> None:
     """Clear active slicer selections before choosing a single location."""
     dropdown = _slicer_dropdown(report_frame, slicer_label)
-    current = dropdown.locator(".slicer-restatement").inner_text().strip()
+    current = slicer_selection_text(report_frame, slicer_label)
     if not current:
         return
 
@@ -318,19 +359,33 @@ def clear_slicer_selection(
     if clear_btn.count() > 0:
         try:
             clear_btn.first.click(force=True)
-            page.wait_for_timeout(500)
-            logger.info("Cleared slicer selection")
-            return
+            page.wait_for_timeout(800)
+            if not slicer_selection_text(report_frame, slicer_label):
+                logger.info("Cleared slicer selection")
+                return
         except Exception:
             logger.debug("Clear selections button not clickable")
 
+    popup = report_frame.locator('[role="listbox"]').last
     if current.lower() == "all":
-        popup = report_frame.locator('[role="listbox"]').last
-        all_option = popup.locator('[role="option"]:has-text("All")')
-        if all_option.count() > 0:
-            all_option.first.click()
+        option, _ = _find_slicer_option(popup, "All")
+        if option is not None:
+            try:
+                option.click(force=True)
+                page.wait_for_timeout(500)
+                logger.info("Deselected slicer 'All' option")
+                return
+            except Exception:
+                logger.debug("Could not deselect slicer 'All' option")
+
+    option, _ = _find_slicer_option(popup, current)
+    if option is not None:
+        try:
+            option.click(force=True)
             page.wait_for_timeout(500)
-            logger.info("Deselected slicer 'All' option")
+            logger.info("Deselected slicer option: %s", current)
+        except Exception:
+            logger.debug("Could not deselect slicer option: %s", current)
 
 
 def _find_slicer_option(popup, option_text: str):
@@ -379,39 +434,49 @@ def _slicer_popup_visible(report_frame: ReportHost) -> bool:
 
 
 def close_slicer_dropdown(
-    page: Page, report_frame: ReportHost, slicer_label: str
+    page: Page,
+    report_frame: ReportHost,
+    slicer_label: str,
+    *,
+    allow_escape: bool = True,
 ) -> None:
-    """Dismiss the Location slicer popup before screenshots."""
+    """Dismiss the slicer popup without undoing the active selection when possible."""
     dropdown = _slicer_dropdown(report_frame, slicer_label)
 
     for attempt in range(5):
         if not _slicer_popup_visible(report_frame):
             return
 
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(400)
-
-        if not _slicer_popup_visible(report_frame):
-            return
+        for selector in ("div.reportContainer", "div.visualContainerHost"):
+            loc = report_frame.locator(selector)
+            if loc.count() > 0:
+                try:
+                    loc.first.click(position={"x": 10, "y": 10}, force=True)
+                    page.wait_for_timeout(400)
+                except Exception:
+                    logger.debug("Could not click outside slicer on %s", selector)
+                if not _slicer_popup_visible(report_frame):
+                    logger.info("Closed slicer dropdown: %s", slicer_label)
+                    return
 
         try:
             dropdown.click(force=True)
             page.wait_for_timeout(400)
         except Exception:
             logger.debug("Could not toggle slicer dropdown (attempt %s)", attempt + 1)
+        if not _slicer_popup_visible(report_frame):
+            logger.info("Closed slicer dropdown: %s", slicer_label)
+            return
 
-    if _slicer_popup_visible(report_frame):
-        for selector in ("div.reportContainer", "div.visualContainerHost"):
-            loc = report_frame.locator(selector)
-            if loc.count() > 0:
-                loc.first.click(position={"x": 10, "y": 10}, force=True)
-                page.wait_for_timeout(400)
-                break
+        if allow_escape:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(400)
+            if not _slicer_popup_visible(report_frame):
+                logger.info("Closed slicer dropdown: %s", slicer_label)
+                return
 
     if _slicer_popup_visible(report_frame):
         raise RuntimeError(f'Could not close slicer dropdown: "{slicer_label}"')
-
-    logger.info("Closed slicer dropdown: %s", slicer_label)
 
 
 def effective_slicer_skip_values(skip_values: list[str] | None = None) -> set[str]:
