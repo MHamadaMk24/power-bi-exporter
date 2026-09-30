@@ -32,7 +32,7 @@ reports:
   - name: skidata
     label: SKIDATA monthly report
     enabled: true
-    report_url: "https://app.powerbi.com/view?r=eyJrIjoiYTBmYTY0MTgtMGQ2My00ODM1LTg5ZjQtZDc0Y2YxNzU0YWNkIiwidCI6IjIwNDcwZjE0LTBjZTgtNDkzZC05M2I1LTFhNjk2YWE0YmM0MCIsImMiOjl9"
+    report_url: "https://app.powerbi.com/view?r=eyJrIjoiYzA0MTExN2YtMzU1MS00NGYxLWJjMDYtOTJlYWU0YmVlM2E1IiwidCI6IjIwNDcwZjE0LTBjZTgtNDkzZC05M2I1LTFhNjk2YWE0YmM0MCIsImMiOjl9"
     navigation:
       entry_button:
         path_width: "184.27586206896552"
